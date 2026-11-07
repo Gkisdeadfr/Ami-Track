@@ -1,163 +1,267 @@
+import 'dart:async';
 import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/attendance_model.dart';
+import 'amizone_parser.dart';
 
 class AmizoneService extends ChangeNotifier {
   static final AmizoneService instance = AmizoneService._internal();
   AmizoneService._internal();
 
-  static const String _kCredentialsUserKey = 'amizone_user';
-  static const String _kCredentialsPassKey = 'amizone_pass';
+  static const String portalUrl = 'https://s.amizone.net/';
+  static const String _homePath = '/Home';
+  static const String _coursesPath = '/Academics/MyCourses';
+
+  static const String _kUsernameKey = 'amizone_user';
+  static const String _kCookiesKey = 'amizone_session_cookies';
   static const String _kAttendanceDataKey = 'amizone_attendance_data';
   static const String _kGlobalTargetKey = 'amizone_global_target';
+  static const String _kLastSyncKey = 'amizone_last_sync';
 
-  String _username = 'A2305225178';
-  String _password = '';
-  double _globalTarget = 95.01; // default to 95.01% to aim for 5/5 marks
+  static const String _userAgent =
+      'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
+
+  String _username = '';
+  Map<String, String> _cookies = {};
+  double _globalTarget = 95.01; // 95.01% is the cut-off for full 5/5 marks
+  bool _isSignedIn = false;
   bool _isLoading = false;
+  DateTime? _lastSyncedAt;
   String? _statusMessage;
 
   final List<CourseAttendance> _courses = [];
 
   String get username => _username;
-  String get password => _password;
   double get globalTarget => _globalTarget;
   bool get isLoading => _isLoading;
+  bool get isSignedIn => _isSignedIn;
+  DateTime? get lastSyncedAt => _lastSyncedAt;
   String? get statusMessage => _statusMessage;
   List<CourseAttendance> get courses => List.unmodifiable(_courses);
 
+  /// Loads the remembered enrollment number, stored session and last scrape.
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
-    _username = prefs.getString(_kCredentialsUserKey) ?? 'A2305225178';
-    _password = prefs.getString(_kCredentialsPassKey) ?? '';
+    _username = prefs.getString(_kUsernameKey) ?? '';
     _globalTarget = prefs.getDouble(_kGlobalTargetKey) ?? 95.01;
 
-    final cachedJson = prefs.getString(_kAttendanceDataKey);
-    if (cachedJson != null) {
+    final rawCookies = prefs.getString(_kCookiesKey);
+    if (rawCookies != null) {
       try {
-        final List<dynamic> decoded = jsonDecode(cachedJson);
-        _courses.clear();
-        _courses.addAll(
-          decoded.map((c) => CourseAttendance.fromJson(c as Map<String, dynamic>)),
-        );
+        final decoded = jsonDecode(rawCookies) as Map<String, dynamic>;
+        _cookies = decoded.map((key, value) => MapEntry(key, value.toString()));
       } catch (_) {
-        _loadDefaultAmizoneData();
+        _cookies = {};
       }
-    } else {
-      _loadDefaultAmizoneData();
+    }
+    _isSignedIn = _cookies.isNotEmpty;
+
+    final lastSync = prefs.getString(_kLastSyncKey);
+    if (lastSync != null) _lastSyncedAt = DateTime.tryParse(lastSync);
+
+    await _loadCachedCourses(prefs);
+    notifyListeners();
+  }
+
+  Future<void> _loadCachedCourses(SharedPreferences prefs) async {
+    final cachedJson = prefs.getString(_kAttendanceDataKey);
+    if (cachedJson == null) return;
+    try {
+      final List<dynamic> decoded = jsonDecode(cachedJson) as List<dynamic>;
+      _courses
+        ..clear()
+        ..addAll(decoded.map((c) => CourseAttendance.fromJson(c as Map<String, dynamic>)));
+    } catch (_) {
+      _courses.clear();
+    }
+  }
+
+  /// Validates the stored session against the portal. Returns true when the app
+  /// can go straight to the dashboard.
+  Future<bool> restoreSession() async {
+    if (_cookies.isEmpty) {
+      _isSignedIn = false;
+      return false;
+    }
+
+    _isLoading = true;
+    notifyListeners();
+
+    try {
+      final home = await _get(_homePath);
+      if (isAmizoneLoginPage(home)) {
+        _isSignedIn = false;
+        _cookies = {};
+        await _persistSession();
+        _statusMessage = 'Your Amizone session expired. Please sign in again.';
+        return false;
+      }
+      _isSignedIn = true;
+      await _applyScrapedData(home);
+      unawaited(_scrapeCourseMarks());
+      return true;
+    } catch (error) {
+      // Offline: keep the cached scrape and let the student work with it.
+      _isSignedIn = true;
+      _statusMessage = 'Offline — showing data from your last sync.';
+      debugPrint('Amizone session check failed: $error');
+      return true;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Called after the student signed in inside the in-app WebView. The cookies
+  /// harvested there carry the authenticated session, so the rest of the
+  /// scraping can use plain HTTP.
+  Future<bool> completeWebSignIn(Map<String, String> cookies, {String? user}) async {
+    if (cookies.isEmpty) return false;
+    _cookies = Map.of(cookies);
+    if (user != null && user.trim().isNotEmpty) _username = user.trim();
+    _isLoading = true;
+    _statusMessage = 'Reading your Amizone data…';
+    notifyListeners();
+
+    try {
+      final home = await _get(_homePath);
+      if (isAmizoneLoginPage(home)) {
+        _statusMessage = 'Amizone did not keep the session. Please try again.';
+        _isSignedIn = false;
+        return false;
+      }
+      _isSignedIn = true;
+      await _saveSession();
+      await _applyScrapedData(home);
+      await _scrapeCourseMarks();
+      return true;
+    } catch (error) {
+      debugPrint('Amizone web session scrape failed: $error');
+      _isSignedIn = true;
+      _statusMessage = 'Signed in, but scraping failed. Pull to sync again.';
+      await _saveSession();
+      return true;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  /// Re-scrapes attendance from the portal with the stored session.
+  Future<bool> refresh() async {
+    if (!_isSignedIn) return false;
+    _isLoading = true;
+    _statusMessage = 'Syncing attendance from Amizone…';
+    notifyListeners();
+
+    try {
+      final home = await _get(_homePath);
+      if (isAmizoneLoginPage(home)) {
+        _isSignedIn = false;
+        _statusMessage = 'Session expired. Please sign in again.';
+        notifyListeners();
+        return false;
+      }
+      final count = await _applyScrapedData(home);
+      await _scrapeCourseMarks();
+      if (count == 0) {
+        _statusMessage =
+            'Signed in, but Amizone returned no attendance rows. The portal layout may have changed.';
+        return false;
+      }
+      _statusMessage = 'Synced $count subjects from Amizone.';
+      return true;
+    } catch (error) {
+      debugPrint('Amizone refresh failed: $error');
+      _statusMessage = 'Sync failed. Showing your last saved attendance.';
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<int> _applyScrapedData(String homeHtml) async {
+    final attendance = parseAttendancePage(homeHtml);
+    final courses = <CourseAttendance>[];
+    for (final record in attendance) {
+      final existing = _courseByCode(record.code);
+      courses.add(
+        CourseAttendance(
+          id: record.code.toLowerCase(),
+          subjectCode: record.code,
+          subjectName: record.name.isEmpty ? _nameFor(record.code) ?? record.code : record.name,
+          // Amizone does not publish credits, so keep the previous value when
+          // we already know it and fall back to the app's default otherwise.
+          credits: existing?.credits ?? 4,
+          attended: record.attended,
+          held: record.held,
+          // Keep the marks we already scraped when this page has none.
+          internalMarks:
+              record.internalMarks > 0 ? record.internalMarks : (existing?.internalMarks ?? 0),
+          maxInternal: record.internalMarks > 0
+              ? record.maxInternal
+              : (existing?.maxInternal ?? record.maxInternal),
+          targetPercentage: _globalTarget,
+        ),
+      );
+    }
+
+    if (courses.isNotEmpty) {
+      _courses
+        ..clear()
+        ..addAll(courses);
+      _lastSyncedAt = DateTime.now();
+      await _saveCourses();
     }
     notifyListeners();
+    return courses.length;
   }
 
-  void _loadDefaultAmizoneData() {
-    _courses.clear();
-    _courses.addAll([
-      CourseAttendance(
-        id: 'math211',
-        subjectCode: 'MATH211',
-        subjectName: 'Applied Mathematics- III',
-        credits: 4,
-        attended: 48,
-        held: 48,
-        internalMarks: 39.00,
-        maxInternal: 40.00,
-        targetPercentage: _globalTarget,
-      ),
-      CourseAttendance(
-        id: 'es201',
-        subjectCode: 'ES201',
-        subjectName: 'Basic Electronics Engineering',
-        credits: 4,
-        attended: 74,
-        held: 75,
-        internalMarks: 9.50,
-        maxInternal: 40.00,
-        targetPercentage: _globalTarget,
-      ),
-      CourseAttendance(
-        id: 'csit124',
-        subjectCode: 'CSIT124',
-        subjectName: 'Data Structures Using C',
-        credits: 4,
-        attended: 78,
-        held: 78,
-        internalMarks: 8.00,
-        maxInternal: 40.00,
-        targetPercentage: _globalTarget,
-      ),
-      CourseAttendance(
-        id: 'cse207',
-        subjectCode: 'CSE207',
-        subjectName: 'Digital Electronics and Computer Org',
-        credits: 4,
-        attended: 67,
-        held: 68,
-        internalMarks: 5.00,
-        maxInternal: 40.00,
-        targetPercentage: _globalTarget,
-      ),
-      CourseAttendance(
-        id: 'aiml202',
-        subjectCode: 'AIML202',
-        subjectName: 'Machine Learning: Theory and App',
-        credits: 4,
-        attended: 80,
-        held: 80,
-        internalMarks: 14.00,
-        maxInternal: 40.00,
-        targetPercentage: _globalTarget,
-      ),
-      CourseAttendance(
-        id: 'es203',
-        subjectCode: 'ES203',
-        subjectName: 'Object Oriented Programming Using C++',
-        credits: 4,
-        attended: 76,
-        held: 76,
-        internalMarks: 11.75,
-        maxInternal: 40.00,
-        targetPercentage: _globalTarget,
-      ),
-      CourseAttendance(
-        id: 'bs211',
-        subjectCode: 'BS211',
-        subjectName: 'Self-Reliance & Emotional Intelligence',
-        credits: 2,
-        attended: 32,
-        held: 32,
-        internalMarks: 5.00,
-        maxInternal: 100.00,
-        targetPercentage: _globalTarget,
-      ),
-      CourseAttendance(
-        id: 'grmn142',
-        subjectCode: 'GRMN142',
-        subjectName: 'Elementary German - II',
-        credits: 2,
-        attended: 7,
-        held: 7,
-        internalMarks: 5.00,
-        maxInternal: 40.00,
-        targetPercentage: _globalTarget,
-      ),
-    ]);
+  /// Internal assessment marks only exist on the course list page; this runs
+  /// after the attendance scrape and quietly fills them in.
+  Future<void> _scrapeCourseMarks() async {
+    try {
+      final html = await _get(_coursesPath);
+      if (isAmizoneLoginPage(html)) return;
+      final details = parseCourseListPage(html);
+      if (details.isEmpty) return;
+
+      for (final record in details) {
+        final index = _courses.indexWhere(
+          (c) => c.subjectCode.toUpperCase() == record.code.toUpperCase(),
+        );
+        if (index == -1) continue;
+        if (record.internalMarks > 0) {
+          _courses[index].internalMarks = record.internalMarks;
+          _courses[index].maxInternal = record.maxInternal;
+        }
+      }
+      await _saveCourses();
+      notifyListeners();
+    } catch (error) {
+      debugPrint('Amizone marks scrape failed: $error');
+    }
   }
 
-  Future<void> saveCredentials(String user, String pass) async {
-    _username = user.trim();
-    _password = pass.trim();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_kCredentialsUserKey, _username);
-    await prefs.setString(_kCredentialsPassKey, _password);
-    notifyListeners();
+  CourseAttendance? _courseByCode(String code) {
+    for (final course in _courses) {
+      if (course.subjectCode.toUpperCase() == code.toUpperCase()) return course;
+    }
+    return null;
   }
+
+  String? _nameFor(String code) => _courseByCode(code)?.subjectName;
 
   Future<void> setGlobalTarget(double newTarget) async {
     _globalTarget = newTarget;
-    for (var c in _courses) {
-      c.targetPercentage = newTarget;
+    for (final course in _courses) {
+      course.targetPercentage = newTarget;
     }
     final prefs = await SharedPreferences.getInstance();
     await prefs.setDouble(_kGlobalTargetKey, _globalTarget);
@@ -174,65 +278,31 @@ class AmizoneService extends ChangeNotifier {
     }
   }
 
-  /// Live Amizone Scraper: Logs into Amizone with user credentials and updates courses
-  Future<bool> scrapeAmizoneLive() async {
-    if (_username.isEmpty || _password.isEmpty) {
-      _statusMessage = 'Please enter your Amizone User Name and Password to sync.';
-      notifyListeners();
-      return false;
-    }
-
-    _isLoading = true;
-    _statusMessage = 'Connecting to Amizone portal (https://s.amizone.net/)...';
+  Future<void> signOut() async {
+    _cookies = {};
+    _isSignedIn = false;
+    _courses.clear();
+    _lastSyncedAt = null;
+    _statusMessage = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove(_kCookiesKey);
+    await prefs.remove(_kAttendanceDataKey);
+    await prefs.remove(_kLastSyncKey);
     notifyListeners();
+  }
 
-    try {
-      final client = http.Client();
+  Future<void> _saveSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_username.isNotEmpty) await prefs.setString(_kUsernameKey, _username);
+    await prefs.setString(_kCookiesKey, jsonEncode(_cookies));
+  }
 
-      // Step 1: Fetch login page for anti-forgery verification tokens
-      final loginPage = await client.get(
-        Uri.parse('https://s.amizone.net/'),
-        headers: {'User-Agent': 'Mozilla/5.0 (Android; Mobile)'},
-      ).timeout(const Duration(seconds: 12));
-
-      final tokenMatch = RegExp(r'name="__RequestVerificationToken"[^>]*value="([^"]+)"')
-          .firstMatch(loginPage.body);
-      final token = tokenMatch?.group(1) ?? '';
-
-      // Step 2: Post login credentials
-      final loginResp = await client.post(
-        Uri.parse('https://s.amizone.net/'),
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'User-Agent': 'Mozilla/5.0 (Android; Mobile)',
-        },
-        body: {
-          '__RequestVerificationToken': token,
-          '_UserName': _username,
-          '_Password': _password,
-        },
-      ).timeout(const Duration(seconds: 15));
-
-      // Step 3: Check if authenticated
-      if (loginResp.statusCode == 302 ||
-          loginResp.body.contains('My Courses') ||
-          loginResp.headers.containsKey('set-cookie')) {
-        _statusMessage = 'Successfully authenticated with Amizone! Attendance updated.';
-      } else {
-        _statusMessage =
-            'Connected to Amizone. Synced attendance & leaves against official portal.';
-      }
-
-      _isLoading = false;
-      await _saveCourses();
-      notifyListeners();
-      return true;
-    } catch (e) {
-      _statusMessage =
-          'Amizone sync complete. All 3rd Semester attendance & leave counters updated.';
-      _isLoading = false;
-      notifyListeners();
-      return true;
+  Future<void> _persistSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_cookies.isEmpty) {
+      await prefs.remove(_kCookiesKey);
+    } else {
+      await prefs.setString(_kCookiesKey, jsonEncode(_cookies));
     }
   }
 
@@ -242,5 +312,59 @@ class AmizoneService extends ChangeNotifier {
       _kAttendanceDataKey,
       jsonEncode(_courses.map((c) => c.toJson()).toList()),
     );
+    if (_lastSyncedAt != null) {
+      await prefs.setString(_kLastSyncKey, _lastSyncedAt!.toIso8601String());
+    }
+  }
+
+  Map<String, String> get _requestHeaders => {
+        'User-Agent': _userAgent,
+        'Accept': 'text/html,application/xhtml+xml',
+        'Accept-Language': 'en-US,en;q=0.9',
+        if (_cookies.isNotEmpty)
+          'Cookie': _cookies.entries.map((e) => '${e.key}=${e.value}').join('; '),
+      };
+
+  Future<String> _get(String path) async {
+    final response = await http
+        .get(Uri.parse('$portalUrl${path.replaceFirst(RegExp(r'^/'), '')}'), headers: _requestHeaders)
+        .timeout(const Duration(seconds: 20));
+    _absorbCookies(response);
+    return response.body;
+  }
+
+  static const Set<String> _cookieAttributes = {
+    'path',
+    'domain',
+    'expires',
+    'max-age',
+    'samesite',
+    'secure',
+    'httponly',
+    'version',
+    'comment',
+  };
+
+  void _absorbCookies(http.Response response) {
+    final raw = response.headers['set-cookie'];
+    if (raw == null || raw.isEmpty) return;
+
+    // Cookies can be comma separated (Amizone sets two at a time), but
+    // attribute values such as Expires also contain commas, so only split
+    // where the next token looks like a new `name=value` pair.
+    final parts = raw.split(RegExp(r',(?=\s*[A-Za-z0-9_.\-]+=)'));
+    for (final part in parts) {
+      final pair = part.split(';').first.trim();
+      final separator = pair.indexOf('=');
+      if (separator <= 0) continue;
+      final name = pair.substring(0, separator).trim();
+      final value = pair.substring(separator + 1).trim();
+      if (name.isEmpty || _cookieAttributes.contains(name.toLowerCase())) continue;
+      if (value.isEmpty || value.toLowerCase() == 'null') {
+        _cookies.remove(name);
+      } else {
+        _cookies[name] = value;
+      }
+    }
   }
 }
