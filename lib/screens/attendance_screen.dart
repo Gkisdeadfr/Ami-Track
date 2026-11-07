@@ -10,25 +10,7 @@ class AttendanceScreen extends StatefulWidget {
 }
 
 class _AttendanceScreenState extends State<AttendanceScreen> {
-  final TextEditingController _userController = TextEditingController();
-  final TextEditingController _passController = TextEditingController();
-  bool _isPasswordVisible = false;
   final Map<String, int> _simulatedExtraBunks = {};
-
-  @override
-  void initState() {
-    super.initState();
-    AmizoneService.instance.init();
-    _userController.text = AmizoneService.instance.username;
-    _passController.text = AmizoneService.instance.password;
-  }
-
-  @override
-  void dispose() {
-    _userController.dispose();
-    _passController.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -87,17 +69,18 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           body: ListView(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
             children: [
-              // 1. Prominent Amizone Login Card
-              _buildLoginCard(context, amizone),
-              const SizedBox(height: 12),
-
-              // 2. Target Attendance Selection
+              // 1. Target Attendance Selection
               _buildTargetSelector(context, amizone),
               const SizedBox(height: 12),
 
-              // 3. Overall Attendance & Marks Overview
+              // 2. Overall Attendance & Marks Overview
               _buildOverallSummary(overallPercent, overallMarks, totalAttended, totalHeld, amizone.globalTarget),
               const SizedBox(height: 14),
+
+              if (courses.isEmpty) ...[
+                _buildEmptyState(),
+                const SizedBox(height: 14),
+              ],
 
               if (amizone.isLoading) ...[
                 const LinearProgressIndicator(),
@@ -158,140 +141,28 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     );
   }
 
-  Widget _buildLoginCard(BuildContext context, AmizoneService amizone) {
-    final hasPassword = amizone.password.isNotEmpty;
-
+  Widget _buildEmptyState() {
     return Container(
-      padding: const EdgeInsets.all(14),
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: hasPassword ? Colors.green.shade300 : Colors.indigo.shade300,
-          width: 1.5,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.03),
-            blurRadius: 8,
-            offset: const Offset(0, 3),
-          ),
-        ],
+        border: Border.all(color: Colors.indigo.shade100),
       ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    hasPassword ? Icons.verified_user : Icons.lock_outline,
-                    color: hasPassword ? Colors.green.shade700 : Colors.indigo.shade700,
-                    size: 20,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    hasPassword ? 'Amizone Credentials Saved' : 'Amizone Student Login',
-                    style: const TextStyle(
-                      fontWeight: FontWeight.bold,
-                      fontSize: 14,
-                      color: Color(0xFF1E293B),
-                    ),
-                  ),
-                ],
-              ),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: hasPassword ? Colors.green.shade50 : Colors.amber.shade50,
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  hasPassword ? 'Active' : 'Login Required',
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.bold,
-                    color: hasPassword ? Colors.green.shade800 : Colors.amber.shade900,
-                  ),
-                ),
-              ),
-            ],
+          Icon(Icons.cloud_download_outlined, size: 34, color: Colors.indigo.shade300),
+          const SizedBox(height: 8),
+          const Text(
+            'No attendance scraped yet',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
           ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                flex: 4,
-                child: TextField(
-                  controller: _userController,
-                  decoration: InputDecoration(
-                    labelText: 'Enrollment No / User',
-                    hintText: 'A2305225178',
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                flex: 4,
-                child: TextField(
-                  controller: _passController,
-                  obscureText: !_isPasswordVisible,
-                  decoration: InputDecoration(
-                    labelText: 'Password',
-                    hintText: '••••••••',
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                    suffixIcon: IconButton(
-                      icon: Icon(
-                        _isPasswordVisible ? Icons.visibility_off : Icons.visibility,
-                        size: 18,
-                      ),
-                      onPressed: () => setState(() => _isPasswordVisible = !_isPasswordVisible),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.indigo.shade800,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                ),
-                icon: const Icon(Icons.sync, size: 16),
-                label: const Text(
-                  'Save & Sync from Amizone',
-                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-                ),
-                onPressed: () async {
-                  final user = _userController.text.trim();
-                  final pass = _passController.text.trim();
-                  if (user.isEmpty || pass.isEmpty) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Please enter both your Amizone Enrollment No and Password.'),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                    return;
-                  }
-                  await amizone.saveCredentials(user, pass);
-                  await amizone.scrapeAmizoneLive();
-                },
-              ),
-            ],
+          const SizedBox(height: 4),
+          Text(
+            'Tap the sync icon to scrape your courses from s.amizone.net.',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
           ),
         ],
       ),
@@ -718,29 +589,13 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
   void _handleSync(BuildContext context) async {
     final amizone = AmizoneService.instance;
-    final user = _userController.text.trim();
-    final pass = _passController.text.trim();
-
-    if (user.isEmpty || pass.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please enter your Amizone Enrollment No and Password in the card above.'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-      return;
-    }
-
-    await amizone.saveCredentials(user, pass);
-    await amizone.scrapeAmizoneLive();
-
-    if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(amizone.statusMessage ?? 'Synced!'),
-          behavior: SnackBarBehavior.floating,
-        ),
-      );
-    }
+    final messenger = ScaffoldMessenger.of(context);
+    await amizone.refresh();
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(amizone.statusMessage ?? 'Synced!'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
   }
 }

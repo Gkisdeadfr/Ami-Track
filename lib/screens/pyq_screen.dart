@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/amizone_service.dart';
 import '../services/scraper_service.dart';
 
 class PYQScreen extends StatefulWidget {
@@ -19,7 +20,6 @@ class _PYQScreenState extends State<PYQScreen> with SingleTickerProviderStateMix
   void initState() {
     super.initState();
     _tabController = TabController(length: 5, vsync: this);
-    ScraperService.instance.init();
   }
 
   @override
@@ -37,11 +37,19 @@ class _PYQScreenState extends State<PYQScreen> with SingleTickerProviderStateMix
         final scraper = ScraperService.instance;
         final allItems = scraper.items;
 
+        // Subject chips follow whatever the scraper actually found.
+        final subjectList = [
+          'All',
+          ...({for (final item in allItems) item.subjectCode}.toList()..sort()),
+        ];
+        final selectedSubject =
+            subjectList.contains(_selectedSubject) ? _selectedSubject : 'All';
+
         // Apply filters
         List<ScrapedResource> filtered = allItems;
 
-        if (_selectedSubject != 'All') {
-          filtered = filtered.where((i) => i.subjectCode == _selectedSubject).toList();
+        if (selectedSubject != 'All') {
+          filtered = filtered.where((i) => i.subjectCode == selectedSubject).toList();
         }
 
         if (_searchQuery.isNotEmpty) {
@@ -82,15 +90,6 @@ class _PYQScreenState extends State<PYQScreen> with SingleTickerProviderStateMix
                 i.title.toLowerCase().contains('practical'))
             .toList();
 
-        final subjects = [
-          'All',
-          'CSIT124',
-          'CSE207',
-          'AIML202',
-          'ES203',
-          'MATH211',
-          'ES201',
-        ];
 
         return Scaffold(
           backgroundColor: const Color(0xFFF8FAFC),
@@ -110,21 +109,18 @@ class _PYQScreenState extends State<PYQScreen> with SingleTickerProviderStateMix
                 icon: const Icon(Icons.sync, color: Colors.white),
                 tooltip: 'Sync with NexAcad',
                 onPressed: () async {
-                  await scraper.scrapeNexacadLive();
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(scraper.statusMessage ?? 'Synced!'),
-                        behavior: SnackBarBehavior.floating,
-                      ),
-                    );
-                  }
+                  final messenger = ScaffoldMessenger.of(context);
+                  await scraper.syncFromNexacad(
+                    enrolledCodes:
+                        AmizoneService.instance.courses.map((c) => c.subjectCode).toList(),
+                  );
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(scraper.statusMessage ?? 'Synced!'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
                 },
-              ),
-              IconButton(
-                icon: const Icon(Icons.travel_explore, color: Colors.white),
-                tooltip: 'Scrape Website URL',
-                onPressed: () => _showCustomScrapeDialog(context),
               ),
             ],
             bottom: TabBar(
@@ -189,8 +185,8 @@ class _PYQScreenState extends State<PYQScreen> with SingleTickerProviderStateMix
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(horizontal: 16),
                   child: Row(
-                    children: subjects.map((sub) {
-                      final isSelected = _selectedSubject == sub;
+                    children: subjectList.map((sub) {
+                      final isSelected = selectedSubject == sub;
                       return Padding(
                         padding: const EdgeInsets.only(right: 6),
                         child: ChoiceChip(
@@ -542,52 +538,4 @@ class _PYQScreenState extends State<PYQScreen> with SingleTickerProviderStateMix
     }
   }
 
-  void _showCustomScrapeDialog(BuildContext context) {
-    final ctrl = TextEditingController(text: 'https://nexacad.pages.dev/');
-    showDialog(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Scrape Website / Library'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Enter URL to scrape directly into the app without taking storage:',
-                style: TextStyle(fontSize: 13),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: ctrl,
-                decoration: const InputDecoration(
-                  labelText: 'Website URL',
-                  hintText: 'https://...',
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.indigo.shade800,
-              ),
-              onPressed: () {
-                final text = ctrl.text.trim();
-                if (text.isNotEmpty) {
-                  ScraperService.instance.scrapeCustomWebsite(text);
-                  Navigator.pop(context);
-                }
-              },
-              child: const Text('Scrape', style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        );
-      },
-    );
-  }
 }

@@ -1,9 +1,14 @@
+import 'dart:convert';
 import 'dart:io';
+
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+
 import '../data/nexacad_library_data.dart';
+import 'nexacad_catalog_parser.dart';
 
 class ScrapedResource {
   final String id;
@@ -27,7 +32,7 @@ class ScrapedResource {
     required this.subjectCode,
     this.subjectName = '',
     this.fileType = 'Notes',
-    this.estimatedSize = '~1.5 MB',
+    this.estimatedSize = '',
     this.isDownloaded = false,
     this.localPath,
   });
@@ -46,8 +51,7 @@ class ScrapedResource {
         'localPath': localPath,
       };
 
-  factory ScrapedResource.fromJson(Map<String, dynamic> json) =>
-      ScrapedResource(
+  factory ScrapedResource.fromJson(Map<String, dynamic> json) => ScrapedResource(
         id: json['id'] as String,
         title: json['title'] as String,
         pdfUrl: json['pdfUrl'] as String,
@@ -56,7 +60,7 @@ class ScrapedResource {
         subjectCode: json['subjectCode'] as String? ?? 'General',
         subjectName: json['subjectName'] as String? ?? '',
         fileType: json['fileType'] as String? ?? 'Notes',
-        estimatedSize: json['estimatedSize'] as String? ?? '~1.5 MB',
+        estimatedSize: json['estimatedSize'] as String? ?? '',
         isDownloaded: json['isDownloaded'] as bool? ?? false,
         localPath: json['localPath'] as String?,
       );
@@ -66,107 +70,211 @@ class ScraperService extends ChangeNotifier {
   static final ScraperService instance = ScraperService._internal();
   ScraperService._internal();
 
+  static const String amizoneUrl = 'https://s.amizone.net/';
+  static const String nexacadUrl = 'https://nexacad.pages.dev/';
+  static const String _nexacadResourcesUrl = 'https://nexacad.pages.dev/pages/resources.html';
+  static const String _resourcesKey = 'scraped_resources_v1';
+  static const String _lastSyncKey = 'scraped_resources_synced_at';
+
+  static const String _userAgent =
+      'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 '
+      '(KHTML, like Gecko) Chrome/124.0.0.0 Mobile Safari/537.36';
+
   final List<ScrapedResource> _items = [];
   bool _isLoading = false;
-  String _activeSource = 'https://nexacad.pages.dev/';
+  String _activeSource = nexacadUrl;
   String? _statusMessage;
+  DateTime? _lastSyncedAt;
+  bool _syncedLive = false;
 
   List<ScrapedResource> get items => List.unmodifiable(_items);
   bool get isLoading => _isLoading;
   String get activeSource => _activeSource;
   String? get statusMessage => _statusMessage;
+  DateTime? get lastSyncedAt => _lastSyncedAt;
+  bool get syncedLive => _syncedLive;
 
-  static const String amizoneUrl = 'https://s.amizone.net/';
-  static const String nexacadUrl = 'https://nexacad.pages.dev/';
+  /// Subject codes present in the scraped library, for filter chips.
+  List<String> get subjectCodes {
+    final codes = <String>{};
+    for (final item in _items) {
+      if (item.subjectCode.isNotEmpty && item.subjectCode != 'General') {
+        codes.add(item.subjectCode);
+      }
+    }
+    return codes.toList()..sort();
+  }
 
   Future<void> init() async {
-    if (_items.isEmpty) {
-      loadNexacadCatalog();
+    final prefs = await SharedPreferences.getInstance();
+    final lastSync = prefs.getString(_lastSyncKey);
+    if (lastSync != null) _lastSyncedAt = DateTime.tryParse(lastSync);
+
+    final cached = prefs.getString(_resourcesKey);
+    if (cached != null) {
+      try {
+        final decoded = jsonDecode(cached) as List<dynamic>;
+        _items
+          ..clear()
+          ..addAll(decoded.map((e) => ScrapedResource.fromJson(e as Map<String, dynamic>)));
+        _syncedLive = true;
+        _statusMessage = 'Loaded ${_items.length} resources saved from your last sync.';
+        notifyListeners();
+        return;
+      } catch (_) {
+        _items.clear();
+      }
     }
+    _loadBundledCatalog();
   }
 
-  void loadNexacadCatalog() {
-    _items.clear();
-    for (var r in NexacadCatalog.semester3Resources) {
-      _items.add(
-        ScrapedResource(
-          id: r.id,
-          title: r.title,
-          pdfUrl: r.previewUrl,
-          downloadUrl: r.downloadUrl,
-          sourceDomain: 'nexacad.pages.dev',
-          subjectCode: r.subjectCode,
-          subjectName: r.subjectName,
-          fileType: r.fileType,
-          estimatedSize: r.size,
+  void _loadBundledCatalog() {
+    _items
+      ..clear()
+      ..addAll(
+        NexacadCatalog.semester3Resources.map(
+          (r) => ScrapedResource(
+            id: r.id,
+            title: r.title,
+            pdfUrl: r.previewUrl,
+            downloadUrl: r.downloadUrl,
+            sourceDomain: 'nexacad.pages.dev',
+            subjectCode: r.subjectCode,
+            subjectName: r.subjectName,
+            fileType: r.fileType,
+            estimatedSize: r.size,
+          ),
         ),
       );
-    }
-    _statusMessage =
-        'Loaded ${_items.length} 3rd Semester resources directly from NexAcad.';
+    _statusMessage = 'Showing the bundled NexAcad index. Sync to fetch the live library.';
     notifyListeners();
   }
 
-  /// Launch Amizone in external browser
-  Future<bool> openAmizone() async {
-    return await openUrl(amizoneUrl);
-  }
-
-  /// Sync NexAcad live catalog
-  Future<int> scrapeNexacadLive() async {
+  /// Scrapes https://nexacad.pages.dev for its course catalogue.
+  ///
+  /// When [enrolledCodes] is supplied (the subjects scraped from Amizone) only
+  /// those courses are kept, so the library matches the student's semester.
+  Future<bool> syncFromNexacad({List<String> enrolledCodes = const []}) async {
     _isLoading = true;
-    _statusMessage = 'Syncing live 3rd Semester resources from NexAcad...';
+    _statusMessage = 'Scraping the NexAcad library…';
     notifyListeners();
-    loadNexacadCatalog();
-    _isLoading = false;
-    _statusMessage = 'NexAcad library synced successfully!';
-    notifyListeners();
-    return _items.length;
-  }
 
-  /// Scrape custom website URL
-  Future<int> scrapeCustomWebsite(String targetUrl) async {
-    _isLoading = true;
-    _statusMessage = 'Connecting to $targetUrl ...';
-    notifyListeners();
     try {
-      final res = await http.get(Uri.parse(targetUrl.trim())).timeout(const Duration(seconds: 12));
-      _statusMessage = 'Connected to $targetUrl (HTTP ${res.statusCode}).';
-    } catch (e) {
-      _statusMessage = 'Could not reach $targetUrl ($e).';
+      final catalog = await _downloadCatalog();
+      if (catalog == null || catalog.isEmpty) {
+        _statusMessage = 'NexAcad returned an empty library. Kept the previous index.';
+        return false;
+      }
+
+      final wanted = enrolledCodes
+          .map(_normaliseCode)
+          .where((code) => code.isNotEmpty)
+          .toSet();
+      var entries = catalog;
+      if (wanted.isNotEmpty) {
+        final matching = catalog
+            .where((e) => wanted.contains(_normaliseCode(e.subjectCode)))
+            .toList();
+        if (matching.isNotEmpty) entries = matching;
+      }
+
+      _items
+        ..clear()
+        ..addAll(
+          entries.asMap().entries.map(
+            (indexed) => ScrapedResource(
+              id: 'nexacad-${indexed.key}',
+              title: indexed.value.title,
+              pdfUrl: indexed.value.previewUrl,
+              downloadUrl: indexed.value.downloadUrl,
+              sourceDomain: 'nexacad.pages.dev',
+              subjectCode: indexed.value.subjectCode,
+              subjectName: indexed.value.subjectName,
+              fileType: indexed.value.fileType,
+              estimatedSize: indexed.value.size,
+            ),
+          ),
+        );
+
+      _items.sort((a, b) {
+        final bySubject = a.subjectCode.compareTo(b.subjectCode);
+        return bySubject != 0 ? bySubject : a.title.compareTo(b.title);
+      });
+
+      _syncedLive = true;
+      _lastSyncedAt = DateTime.now();
+      _activeSource = nexacadUrl;
+      _statusMessage =
+          'Synced ${_items.length} resources for ${subjectCodes.length} subjects from NexAcad.';
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _resourcesKey,
+        jsonEncode(_items.map((e) => e.toJson()).toList()),
+      );
+      await prefs.setString(_lastSyncKey, _lastSyncedAt!.toIso8601String());
+      return true;
+    } catch (error) {
+      debugPrint('NexAcad scrape failed: $error');
+      _statusMessage = 'Could not reach NexAcad. Showing the saved index.';
+      return false;
+    } finally {
+      _isLoading = false;
+      notifyListeners();
     }
-    _isLoading = false;
-    notifyListeners();
-    return 0;
   }
 
-  /// Opens URL directly in browser / external viewer app
+  /// Finds the current catalogue bundle from the resources page (its file name
+  /// is content hashed, so it changes whenever NexAcad publishes new files).
+  Future<List<NexacadEntry>?> _downloadCatalog() async {
+    final page = await http
+        .get(Uri.parse(_nexacadResourcesUrl), headers: {'User-Agent': _userAgent})
+        .timeout(const Duration(seconds: 20));
+    if (page.statusCode != 200) return null;
+
+    final match = RegExp(r'''["']([^"']*course_catalog[^"']*\.js)["']''').firstMatch(page.body);
+    final scriptUrl = match == null
+        ? 'https://nexacad.pages.dev/js/course_catalog.4b19e0c4.js'
+        : Uri.parse(_nexacadResourcesUrl).resolve(match.group(1)!).toString();
+
+    final script = await http
+        .get(Uri.parse(scriptUrl), headers: {'User-Agent': _userAgent})
+        .timeout(const Duration(seconds: 30));
+    if (script.statusCode != 200) return null;
+
+    return parseNexacadCatalog(script.body);
+  }
+
+  static String _normaliseCode(String code) =>
+      code.toUpperCase().replaceAll(RegExp(r'[^A-Z0-9]'), '');
+
+  Future<bool> openAmizone() => openUrl(amizoneUrl);
+
   Future<bool> openUrl(String url) async {
     try {
-      final uri = Uri.parse(url.trim());
       return await launchUrl(
-        uri,
+        Uri.parse(url.trim()),
         mode: LaunchMode.externalApplication,
       );
-    } catch (e) {
-      debugPrint('Launch external failed: $e');
+    } catch (error) {
+      debugPrint('Launch external failed: $error');
       try {
-        final uri = Uri.parse(url.trim());
-        return await launchUrl(uri, mode: LaunchMode.platformDefault);
-      } catch (e2) {
-        debugPrint('Launch platformDefault failed: $e2');
+        return await launchUrl(
+          Uri.parse(url.trim()),
+          mode: LaunchMode.platformDefault,
+        );
+      } catch (fallbackError) {
+        debugPrint('Launch platformDefault failed: $fallbackError');
         return false;
       }
     }
   }
 
-  /// Triggers direct download on Android
-  Future<bool> triggerDirectDownload(ScrapedResource item) async {
-    // Google Drive direct download link: launches in system download manager
-    return await openUrl(item.downloadUrl);
-  }
+  /// Hands the file to the system download manager / Drive app.
+  Future<bool> triggerDirectDownload(ScrapedResource item) => openUrl(item.downloadUrl);
 
-  /// Streams file and saves to local App Documents directory
+  /// Streams the file into the app's documents directory when the host allows
+  /// it (Google Drive does for small files), otherwise opens it externally.
   Future<File?> downloadToFile(
     ScrapedResource item, {
     required Function(double progress) onProgress,
@@ -174,7 +282,7 @@ class ScraperService extends ChangeNotifier {
     try {
       final dir = await getApplicationDocumentsDirectory();
       final sanitizedName =
-          '${item.subjectCode}_${item.title}'.replaceAll(RegExp(r'[^a-zA-Z0-9_\.]'), '_');
+          '${item.subjectCode}_${item.title}'.replaceAll(RegExp(r'[^a-zA-Z0-9_.]'), '_');
       final fileName = sanitizedName.endsWith('.pdf') ? sanitizedName : '$sanitizedName.pdf';
       final savePath = '${dir.path}/$fileName';
       final file = File(savePath);
@@ -189,10 +297,9 @@ class ScraperService extends ChangeNotifier {
 
       onProgress(0.2);
       final client = http.Client();
-      final response = await client.get(
-        Uri.parse(item.downloadUrl),
-        headers: {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'},
-      ).timeout(const Duration(seconds: 25));
+      final response = await client
+          .get(Uri.parse(item.downloadUrl), headers: {'User-Agent': _userAgent})
+          .timeout(const Duration(seconds: 25));
 
       if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
         onProgress(0.8);
@@ -202,13 +309,12 @@ class ScraperService extends ChangeNotifier {
         onProgress(1.0);
         notifyListeners();
         return file;
-      } else {
-        // Fallback: trigger system download manager via browser
-        await triggerDirectDownload(item);
-        return null;
       }
-    } catch (e) {
-      debugPrint('downloadToFile error: $e. Falling back to external downloader.');
+
+      await triggerDirectDownload(item);
+      return null;
+    } catch (error) {
+      debugPrint('downloadToFile error: $error. Falling back to external downloader.');
       await triggerDirectDownload(item);
       return null;
     }

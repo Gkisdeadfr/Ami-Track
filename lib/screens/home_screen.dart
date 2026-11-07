@@ -3,17 +3,21 @@ import 'package:intl/intl.dart';
 import '../models/exam.dart';
 import '../models/syllabus.dart';
 import '../models/assignment.dart';
+import '../services/amizone_service.dart';
+import '../services/scraper_service.dart';
 import '../services/storage_service.dart';
 
 class HomeScreen extends StatelessWidget {
   final Function(int) onTabChange;
-  const HomeScreen({super.key, required this.onTabChange});
+  final VoidCallback onSignOut;
+  const HomeScreen({super.key, required this.onTabChange, required this.onSignOut});
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: StorageService.instance,
+      animation: Listenable.merge([StorageService.instance, AmizoneService.instance]),
       builder: (context, _) {
+        final amizone = AmizoneService.instance;
         final exams = StorageService.instance.exams;
         final syllabus = StorageService.instance.syllabus;
         final assignments = StorageService.instance.assignments;
@@ -54,7 +58,7 @@ class HomeScreen extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 const Text(
-                  'CampusTrack CSE 3X',
+                  'CampusTrack',
                   style: TextStyle(
                     fontWeight: FontWeight.bold,
                     fontSize: 18,
@@ -62,7 +66,9 @@ class HomeScreen extends StatelessWidget {
                   ),
                 ),
                 Text(
-                  'Odd Sem 2026-27 • Section 3CSE3-X',
+                  amizone.isSignedIn && amizone.username.isNotEmpty
+                      ? '${amizone.username} • ${amizone.courses.length} subjects synced'
+                      : 'Sign in to Amizone to sync your data',
                   style: TextStyle(
                     fontSize: 11,
                     color: Colors.indigo.shade100,
@@ -72,18 +78,22 @@ class HomeScreen extends StatelessWidget {
             ),
             actions: [
               IconButton(
-                icon: const Icon(Icons.refresh, color: Colors.white),
-                tooltip: 'Reset Demo Data',
-                onPressed: () async {
-                  await StorageService.instance.resetAll();
-                  if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Data refreshed to default schedule!'),
-                      ),
-                    );
-                  }
+                icon: const Icon(Icons.sync, color: Colors.white),
+                tooltip: 'Sync from Amizone & NexAcad',
+                onPressed: () => _sync(context),
+              ),
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert, color: Colors.white),
+                onSelected: (value) async {
+                  if (value == 'sync') await _sync(context);
+                  if (value == 'reset') await StorageService.instance.resetAll();
+                  if (value == 'signout') onSignOut();
                 },
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'sync', child: Text('Sync now')),
+                  PopupMenuItem(value: 'reset', child: Text('Reset local trackers')),
+                  PopupMenuItem(value: 'signout', child: Text('Sign out')),
+                ],
               ),
             ],
           ),
@@ -155,7 +165,7 @@ class HomeScreen extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const Text(
-                    'Upcoming Practicals (3CSE3-X)',
+                    'Upcoming Practicals',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.bold,
@@ -209,6 +219,30 @@ class HomeScreen extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  Future<void> _sync(BuildContext context) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final amizone = AmizoneService.instance;
+
+    final attendanceOk = await amizone.refresh();
+    final libraryOk = await ScraperService.instance.syncFromNexacad(
+      enrolledCodes: amizone.courses.map((c) => c.subjectCode).toList(),
+    );
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(
+          [
+            attendanceOk
+                ? 'Attendance synced (${amizone.courses.length} subjects).'
+                : amizone.statusMessage ?? 'Attendance sync failed.',
+            libraryOk ? 'Library synced.' : 'Library kept from last sync.',
+          ].join(' '),
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
     );
   }
 
