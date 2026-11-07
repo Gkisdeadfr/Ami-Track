@@ -139,6 +139,7 @@ class _AmizoneWebLoginScreenState extends State<AmizoneWebLoginScreen> {
 
     _prefilled = true;
     final result = state.toString();
+    debugPrint('Amizone WebView: state=$result url=$url');
     if (result.contains('app')) {
       // Authenticated: fall through and harvest the session.
     } else {
@@ -163,6 +164,9 @@ class _AmizoneWebLoginScreenState extends State<AmizoneWebLoginScreen> {
         for (final cookie in cookies)
           if (cookie.name.isNotEmpty) cookie.name: cookie.value,
       };
+      // Names only: the values are the live session tokens.
+      debugPrint('Amizone WebView: harvested ${session.length} cookies '
+          '(${session.keys.join(", ")})');
       if (session.isEmpty) {
         setState(() => _error = 'Amizone did not return a session. Please try again.');
         return;

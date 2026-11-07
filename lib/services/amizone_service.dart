@@ -131,6 +131,10 @@ class AmizoneService extends ChangeNotifier {
     try {
       final home = await _get(_homePath);
       if (isAmizoneLoginPage(home)) {
+        // Cookie names only: this tells us whether the portal handed back a
+        // session at all, or bounced /Home back to the sign-in page.
+        debugPrint('Amizone: /Home served the login page with '
+            '${_cookies.length} cookies (${_cookies.keys.join(", ")})');
         _statusMessage = 'Amizone did not keep the session. Please try again.';
         _isSignedIn = false;
         return false;
