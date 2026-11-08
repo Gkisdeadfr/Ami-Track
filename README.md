@@ -1,4 +1,5 @@
-# CampusTrack
+
+# AmiTrack
 
 A Flutter app for Amity students: it signs in to [Amizone](https://s.amizone.net/),
 scrapes attendance and internal marks, and pairs them with the study material from
@@ -24,6 +25,7 @@ scrapes attendance and internal marks, and pairs them with the study material fr
    that Amizone answers any failed sign-in with the same generic
    "Please check your credential !!" text, so a rejection in the WebView does not
    by itself prove the password is wrong.
+
 4. **Scraping** – attendance comes from `/Home`, internal assessment marks from
    `/Academics/MyCourses`. The NexAcad library is scraped from
    `/pages/resources.html` and its hashed `js/course_catalog.*.js` bundle, then
@@ -33,9 +35,9 @@ scrapes attendance and internal marks, and pairs them with the study material fr
 
 ## Data sources
 
-| Source | What is scraped |
-| --- | --- |
-| `https://s.amizone.net/` | Attendance (attended/held), course names, internal assessment marks |
+| Source                       | What is scraped                                                          |
+| ---------------------------- | ------------------------------------------------------------------------ |
+| `https://s.amizone.net/`     | Attendance (attended/held), course names, internal assessment marks      |
 | `https://nexacad.pages.dev/` | Course resources (notes, PYQs, books, labs) and their Google Drive links |
 
 The bundled index in `lib/data/nexacad_library_data.dart` is only a fallback for

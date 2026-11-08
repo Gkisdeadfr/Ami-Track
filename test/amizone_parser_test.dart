@@ -180,4 +180,51 @@ void main() {
       expect(result.courses[0].gradePoint, 10);
     });
   });
+
+  group('parseStudentProfile', () {
+    test('extracts name, enrollment number, and image from /Home', () {
+      const homeHtml = '''
+      <html>
+        <head>
+          <script>
+            var imageUrl = '/ImageViewer/Index?Type=1&amp;sUID=36F48E68-B33B-4EEA-B97E-1ABE14B20D45';
+          </script>
+        </head>
+        <body>
+          <span class="user-info">
+            Mr John Doe<small>A2305225178</small>
+          </span>
+        </body>
+      </html>
+      ''';
+
+      final profile = parseStudentProfileFromHome(homeHtml);
+      expect(profile.name, 'John Doe');
+      expect(profile.enrollmentNumber, 'A2305225178');
+      expect(profile.profilePictureUrl, 'https://s.amizone.net/ImageViewer/Index?Type=1&sUID=36F48E68-B33B-4EEA-B97E-1ABE14B20D45');
+    });
+
+    test('extracts name, enrollment, program, and photo from ID Card', () {
+      const idCardHtml = '''
+      <div>
+        <img src="https://s.amizone.net/ImageViewer/Index?Type=1&amp;SUID=98RFGK88-A01C-1JJO-N73D-4BJR42B33J51"
+             id="ImgPhotoIDCardFront1" />
+        <div id="lblNameIDCardFront1">
+          John Doe<br>B.Tech (CSE)<br>2020-2024
+        </div>
+        <div id="lblInfoIDCardBack1">
+          Enrollment No : A2305225178<br>
+          Date Of Birth : 05.04.2001
+        </div>
+      </div>
+      ''';
+
+      final profile = parseStudentProfileFromIdCard(idCardHtml);
+      expect(profile.name, 'John Doe');
+      expect(profile.enrollmentNumber, 'A2305225178');
+      expect(profile.program, 'B.Tech (CSE)');
+      expect(profile.batch, '2020-2024');
+      expect(profile.profilePictureUrl, 'https://s.amizone.net/ImageViewer/Index?Type=1&SUID=98RFGK88-A01C-1JJO-N73D-4BJR42B33J51');
+    });
+  });
 }

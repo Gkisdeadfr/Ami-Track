@@ -94,7 +94,9 @@ class HomeScreen extends StatelessWidget {
                     ),
                     Text(
                       amizone.isSignedIn && amizone.username.isNotEmpty
-                          ? '${amizone.username} • ${amizone.courses.length} subjects'
+                          ? (amizone.name.isNotEmpty
+                              ? '${amizone.name} (${amizone.displayEnrollment}) • ${amizone.courses.length} subjects'
+                              : '${amizone.displayEnrollment} • ${amizone.courses.length} subjects')
                           : 'Sign in to Amizone to sync',
                       style: TextStyle(
                         fontSize: 11,
@@ -149,7 +151,7 @@ class HomeScreen extends StatelessWidget {
                     child: Text(
                       amizone.username.isEmpty
                           ? 'Sign out'
-                          : 'Sign out ${amizone.username}',
+                          : 'Sign out ${amizone.displayName}',
                     ),
                   ),
                 ],

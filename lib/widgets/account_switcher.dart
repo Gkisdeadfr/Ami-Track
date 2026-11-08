@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 
 import '../screens/login_screen.dart';
@@ -62,9 +63,7 @@ Future<void> showAccountSwitcher(BuildContext context) {
                   else
                     ...accounts.map((account) {
                       final current = amizone.isCurrent(account.username);
-                      final initial = account.username.trim().isEmpty
-                          ? '?'
-                          : account.username.trim().substring(0, 1).toUpperCase();
+                      final hasAvatar = account.avatarBase64 != null && account.avatarBase64!.isNotEmpty;
                       return Container(
                         margin: const EdgeInsets.only(bottom: 8),
                         decoration: BoxDecoration(
@@ -85,18 +84,21 @@ Future<void> showAccountSwitcher(BuildContext context) {
                                 ? const Color(0xFF1E3A8A)
                                 : theme.colorScheme.surfaceContainerHighest,
                             foregroundColor: current ? Colors.white : theme.colorScheme.primary,
-                            child: Text(initial, style: const TextStyle(fontWeight: FontWeight.bold)),
+                            backgroundImage: hasAvatar
+                                ? MemoryImage(base64Decode(account.avatarBase64!))
+                                : null,
+                            child: hasAvatar
+                                ? null
+                                : Text(account.initial, style: const TextStyle(fontWeight: FontWeight.bold)),
                           ),
                           title: Text(
-                            account.username,
+                            account.displayName,
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                           subtitle: Text(
                             !account.hasSession
                                 ? 'Session expired • Tap to re-login'
-                                : current
-                                    ? 'Current active user (${account.courses.length} subjects)'
-                                    : 'Tap to switch (${account.courses.length} subjects)',
+                                : '${account.displayEnrollment} • ${account.courses.length} subjects',
                             style: const TextStyle(fontSize: 11),
                           ),
                           trailing: current

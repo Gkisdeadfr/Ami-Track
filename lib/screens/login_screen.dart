@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
@@ -213,9 +214,7 @@ class _LoginScreenState extends State<LoginScreen> {
           alignment: WrapAlignment.center,
           children: accounts.map((account) {
             final isCurrent = AmizoneService.instance.isCurrent(account.username);
-            final initial = account.username.trim().isEmpty
-                ? '?'
-                : account.username.trim().substring(0, 1).toUpperCase();
+            final hasAvatar = account.avatarBase64 != null && account.avatarBase64!.isNotEmpty;
 
             return InkWell(
               onTap: _busy
@@ -239,7 +238,7 @@ class _LoginScreenState extends State<LoginScreen> {
               borderRadius: BorderRadius.circular(20),
               child: AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
-                width: 140,
+                width: 150,
                 padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
                 decoration: BoxDecoration(
                   color: theme.cardColor,
@@ -269,14 +268,19 @@ class _LoginScreenState extends State<LoginScreen> {
                           backgroundColor: isCurrent
                               ? const Color(0xFF1E3A8A)
                               : theme.colorScheme.surfaceContainerHighest,
-                          child: Text(
-                            initial,
-                            style: TextStyle(
-                              fontSize: 26,
-                              fontWeight: FontWeight.bold,
-                              color: isCurrent ? Colors.white : theme.colorScheme.primary,
-                            ),
-                          ),
+                          backgroundImage: hasAvatar
+                              ? MemoryImage(base64Decode(account.avatarBase64!))
+                              : null,
+                          child: hasAvatar
+                              ? null
+                              : Text(
+                                  account.initial,
+                                  style: TextStyle(
+                                    fontSize: 26,
+                                    fontWeight: FontWeight.bold,
+                                    color: isCurrent ? Colors.white : theme.colorScheme.primary,
+                                  ),
+                                ),
                         ),
                         Positioned(
                           right: 0,
@@ -294,16 +298,43 @@ class _LoginScreenState extends State<LoginScreen> {
                       ],
                     ),
                     const SizedBox(height: 12),
-                    Text(
-                      account.username,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: theme.colorScheme.onSurface,
+                    if (account.name.isNotEmpty) ...[
+                      Text(
+                        account.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: theme.colorScheme.onSurface,
+                        ),
                       ),
-                    ),
+                      const SizedBox(height: 2),
+                      Text(
+                        account.displayEnrollment,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
+                    ] else ...[
+                      Text(
+                        account.displayEnrollment,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: theme.colorScheme.onSurface,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 4),
                     Text(
                       account.courses.isNotEmpty

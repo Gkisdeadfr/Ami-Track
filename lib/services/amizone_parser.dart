@@ -5,6 +5,36 @@ import 'package:intl/intl.dart';
 import '../models/exam.dart';
 import '../models/exam_result.dart';
 
+/// Scraped profile information for an Amizone student.
+class AmizoneStudentProfile {
+  final String name;
+  final String enrollmentNumber;
+  final String profilePictureUrl;
+  final String program;
+  final String batch;
+
+  const AmizoneStudentProfile({
+    this.name = '',
+    this.enrollmentNumber = '',
+    this.profilePictureUrl = '',
+    this.program = '',
+    this.batch = '',
+  });
+
+  bool get isEmpty => name.isEmpty && enrollmentNumber.isEmpty && profilePictureUrl.isEmpty;
+  bool get isNotEmpty => !isEmpty;
+
+  AmizoneStudentProfile mergeWith(AmizoneStudentProfile other) {
+    return AmizoneStudentProfile(
+      name: other.name.isNotEmpty ? other.name : name,
+      enrollmentNumber: other.enrollmentNumber.isNotEmpty ? other.enrollmentNumber : enrollmentNumber,
+      profilePictureUrl: other.profilePictureUrl.isNotEmpty ? other.profilePictureUrl : profilePictureUrl,
+      program: other.program.isNotEmpty ? other.program : program,
+      batch: other.batch.isNotEmpty ? other.batch : batch,
+    );
+  }
+}
+
 /// A single course row scraped from Amizone.
 class AmizoneCourseRecord {
   final String code;
@@ -57,33 +87,192 @@ bool isAmizoneLoginPage(String html) {
       doc.querySelector('input[name="_Password"]') != null;
 }
 
+/// Parses the student's identity (name, enrollment number, headshot) from /Home.
+AmizoneStudentProfile parseStudentProfileFromHome(String html) {
+  if (html.trim().isEmpty || isAmizoneLoginPage(html)) {
+    return const AmizoneStudentProfile();
+  }
+  final doc = html_parser.parse(html);
+  String name = '';
+  String enrollmentNumber = '';
+  String profilePictureUrl = '';
+
+  // 1. User info element in navbar (e.g. <span class="user-info">Mr John Doe<small>A2305225178</small></span>)
+  final userInfo = doc.querySelector('.user-info, [class*="user-info"]');
+  if (userInfo != null) {
+    final small = userInfo.querySelector('small');
+    if (small != null) {
+      enrollmentNumber = _clean(small.text);
+      final rawName = _clean(userInfo.text.replaceFirst(small.text, ''));
+      name = _cleanSalutation(rawName);
+    } else {
+      final match = RegExp(r'\b[A-Za-z]\d{9,12}\b|\b\d{7,10}\b').firstMatch(userInfo.text);
+      if (match != null) {
+        enrollmentNumber = match.group(0)!;
+        name = _cleanSalutation(_clean(userInfo.text.replaceFirst(enrollmentNumber, '')));
+      } else {
+        name = _cleanSalutation(_clean(userInfo.text));
+      }
+    }
+  }
+
+  // 2. Profile picture URL from script or img tag
+  final imgScriptMatch = RegExp(r'''['"](/ImageViewer/Index\?[^'"]+)['"]''', caseSensitive: false)
+      .firstMatch(html);
+  if (imgScriptMatch != null) {
+    profilePictureUrl = imgScriptMatch.group(1)!.replaceAll('&amp;', '&');
+  } else {
+    final img = doc.querySelector('.nav-user-photo, img[src*="ImageViewer"], #userphoto img');
+    if (img != null) {
+      profilePictureUrl = (img.attributes['src'] ?? '').replaceAll('&amp;', '&');
+    }
+  }
+
+  if (profilePictureUrl.isNotEmpty && !profilePictureUrl.startsWith('http')) {
+    profilePictureUrl = 'https://s.amizone.net${profilePictureUrl.startsWith('/') ? '' : '/'}$profilePictureUrl';
+  }
+
+  return AmizoneStudentProfile(
+    name: name,
+    enrollmentNumber: enrollmentNumber,
+    profilePictureUrl: profilePictureUrl,
+  );
+}
+
+/// Parses the student's ID Card view (https://s.amizone.net/IDCard).
+AmizoneStudentProfile parseStudentProfileFromIdCard(String html) {
+  if (html.trim().isEmpty || isAmizoneLoginPage(html)) {
+    return const AmizoneStudentProfile();
+  }
+  final doc = html_parser.parse(html);
+  String name = '';
+  String program = '';
+  String batch = '';
+  String enrollmentNumber = '';
+  String profilePictureUrl = '';
+
+  // Front of ID card
+  final nameDiv = doc.querySelector('#lblNameIDCardFront1, [id*="lblNameIDCard"]');
+  if (nameDiv != null) {
+    for (final br in nameDiv.querySelectorAll('br')) {
+      br.replaceWith(Text('\n'));
+    }
+    final lines = nameDiv.text
+        .split('\n')
+        .map((l) => _clean(l))
+        .where((l) => l.isNotEmpty)
+        .toList();
+    if (lines.isNotEmpty) name = _cleanSalutation(lines[0]);
+    if (lines.length > 1) program = lines[1];
+    if (lines.length > 2) batch = lines[2];
+  }
+
+  // Headshot image
+  final photoImg = doc.querySelector('img#ImgPhotoIDCardFront1, img[id*="PhotoIDCard"], img[src*="ImageViewer"]');
+  if (photoImg != null) {
+    final src = (photoImg.attributes['src'] ?? '').replaceAll('&amp;', '&');
+    if (src.isNotEmpty) {
+      profilePictureUrl = src.startsWith('http') ? src : 'https://s.amizone.net${src.startsWith('/') ? '' : '/'}$src';
+    }
+  }
+
+  // Back of ID card (contains enrollment number)
+  final backDiv = doc.querySelector('#lblInfoIDCardBack1, [id*="lblInfoIDCardBack"]') ?? doc.body;
+  if (backDiv != null) {
+    final text = backDiv.text;
+    final enrollMatch = RegExp(r'Enrollment\s*(?:No|Number)?\s*[:\s-]+\s*([A-Za-z0-9]+)', caseSensitive: false)
+        .firstMatch(text);
+    if (enrollMatch != null) {
+      enrollmentNumber = enrollMatch.group(1)!.trim();
+    }
+  }
+
+  return AmizoneStudentProfile(
+    name: name,
+    enrollmentNumber: enrollmentNumber,
+    profilePictureUrl: profilePictureUrl,
+    program: program,
+    batch: batch,
+  );
+}
+
 /// Reads the "My Attendance" widget on https://s.amizone.net/Home.
 List<AmizoneCourseRecord> parseAttendancePage(String html) {
+  if (html.trim().isEmpty || isAmizoneLoginPage(html)) return [];
   final doc = html_parser.parse(html);
 
+  // Strategy 1: Find attendance widget by header
   Element? attendanceWidget;
-  for (final header in doc.querySelectorAll('.widget-header')) {
-    if (header.text.trim().toLowerCase().contains('my attendance')) {
+  for (final header in doc.querySelectorAll('.widget-header, .widget-title, h4, h5, h6, .card-title, .panel-title')) {
+    final text = header.text.trim().toLowerCase();
+    if (text.contains('attendance') && !text.contains('exam') && !text.contains('summary')) {
+      Element? p = header.parent;
+      for (var i = 0; i < 4 && p != null; i++) {
+        final classes = (p.attributes['class'] ?? '').toLowerCase();
+        if (classes.contains('widget-box') ||
+            classes.contains('widget-container-col') ||
+            classes.contains('panel') ||
+            classes.contains('card') ||
+            p.querySelector('#tasks') != null ||
+            p.querySelector('ul.item-list') != null) {
+          attendanceWidget = p;
+          break;
+        }
+        p = p.parent;
+      }
+      if (attendanceWidget != null) break;
       attendanceWidget = header.parent;
       break;
     }
   }
 
-  final rows = attendanceWidget != null
-      ? attendanceWidget.querySelectorAll('#tasks li')
-      : doc.querySelectorAll('#tasks li');
+  final searchScope = attendanceWidget ?? doc;
+  var rows = searchScope.querySelectorAll('#tasks li, ul.item-list li, ul.list-unstyled li, li.clearfix, li[class*="item-"]');
+  if (rows.isEmpty && attendanceWidget != null) {
+    rows = doc.querySelectorAll('#tasks li, ul.item-list li, ul.list-unstyled li, li.clearfix, li[class*="item-"]');
+  }
 
   final records = <AmizoneCourseRecord>[];
+  final seenCodes = <String>{};
+
   for (final row in rows) {
-    final code = _clean(row.querySelector('.sub-code')?.text ?? '');
-    final label = _clean(row.querySelector('.lbl')?.text ?? '');
-    final counts = _firstRatio(row.querySelector('.class-count')?.text ?? '');
-    if (code.isEmpty || counts == null) continue;
+    var code = _clean(row.querySelector('.sub-code, [class*="code"]')?.text ?? '');
+    final label = _clean(row.querySelector('.lbl, .subject-title, label')?.text ?? row.text);
+
+    if (code.isEmpty) {
+      final codeMatch = RegExp(r'\b[A-Z]{2,6}\d{2,5}[A-Z]?\b').firstMatch(label);
+      if (codeMatch != null) {
+        code = codeMatch.group(0)!;
+      }
+    }
+
+    if (code.isEmpty) continue;
+    code = code.toUpperCase();
+
+    var counts = _firstRatio(row.querySelector('.class-count, [class*="count"]')?.text ?? '');
+    counts ??= _firstRatio(row.text);
+    if (counts == null) {
+      final pctMatch = RegExp(r'(\d+(?:\.\d+)?)%').firstMatch(row.text);
+      if (pctMatch != null) {
+        final pct = double.tryParse(pctMatch.group(1)!) ?? 100.0;
+        counts = (pct.round(), 100);
+      }
+    }
+    if (counts == null) continue;
+
+    var name = _clean(row.querySelector('.lbl')?.text ?? label);
+    name = _stripCode(name, code);
+    name = name
+        .replaceAll(RegExp(r'\d+\s*/\s*\d+'), '')
+        .replaceAll(RegExp(r'\d+(?:\.\d+)?%'), '')
+        .trim();
+
+    if (!seenCodes.add(code)) continue;
 
     records.add(
       AmizoneCourseRecord(
         code: code,
-        name: _stripCode(label, code),
+        name: name.isEmpty ? code : name,
         attended: counts.$1,
         held: counts.$2,
       ),
@@ -95,52 +284,96 @@ List<AmizoneCourseRecord> parseAttendancePage(String html) {
 /// Reads the course table on https://s.amizone.net/Academics/MyCourses.
 /// It carries internal assessment marks, course type, and syllabus info.
 List<AmizoneCourseRecord> parseCourseListPage(String html) {
+  if (html.trim().isEmpty || isAmizoneLoginPage(html)) return [];
   final doc = html_parser.parse(html);
   final records = <AmizoneCourseRecord>[];
+  final seenCodes = <String>{};
 
-  // Strategy 1: Data-title attribute table rows (Amizone responsive tables)
   final trs = doc.querySelectorAll('tr');
   for (final row in trs) {
-    var code = _clean(row.querySelector('td[data-title="Course Code"]')?.text ?? '');
-    var name = _clean(row.querySelector('td[data-title="Course Name"]')?.text ?? '');
-    var type = _clean(row.querySelector('td[data-title="Type"]')?.text ?? '');
-    var attText = row.querySelector('td[data-title="Attendance"]')?.text ?? '';
-    var internalText = row.querySelector('td[data-title="Internal Asses."]')?.text ?? '';
-    
-    // Look for syllabus link or button in the row
+    final tds = row.querySelectorAll('td');
+    if (tds.isEmpty) continue;
+
+    String code = '';
+    String name = '';
+    String type = '';
+    String attText = '';
+    String internalText = '';
     String syllabusUrl = '';
     String syllabusSummary = '';
-    final syllabusAnchor = row.querySelector('a[href*="Syllabus"], a[href*="syllabus"]') ??
-        row.querySelector('button[onclick*="Syllabus"], button[data-target*="Syllabus"]');
-    if (syllabusAnchor != null) {
-      syllabusUrl = syllabusAnchor.attributes['href'] ??
-          syllabusAnchor.attributes['data-url'] ??
-          syllabusAnchor.attributes['onclick'] ??
-          '';
-      syllabusSummary = _clean(syllabusAnchor.text);
+
+    // Strategy 1: Data-title attribute table rows (Amizone responsive tables)
+    for (final td in tds) {
+      final titleAttr = (td.attributes['data-title'] ??
+              td.attributes['data-original-title'] ??
+              '')
+          .toLowerCase()
+          .trim();
+      final text = _clean(td.text);
+
+      if (titleAttr.contains('code') && code.isEmpty) {
+        code = text;
+      } else if ((titleAttr.contains('name') || titleAttr.contains('title') || titleAttr == 'subject') && name.isEmpty) {
+        name = text;
+      } else if (titleAttr.contains('type') && type.isEmpty) {
+        type = text;
+      } else if (titleAttr.contains('attendance') && attText.isEmpty) {
+        attText = text;
+      } else if ((titleAttr.contains('internal') || titleAttr.contains('asses')) && internalText.isEmpty) {
+        internalText = text;
+      }
+
+      final syllabusAnchor = td.querySelector('a[href*="Syllabus"], a[href*="syllabus"]') ??
+          td.querySelector('button[onclick*="Syllabus"], button[data-target*="Syllabus"]');
+      if (syllabusAnchor != null && syllabusUrl.isEmpty) {
+        syllabusUrl = syllabusAnchor.attributes['href'] ??
+            syllabusAnchor.attributes['data-url'] ??
+            syllabusAnchor.attributes['onclick'] ??
+            '';
+        syllabusSummary = _clean(syllabusAnchor.text);
+      }
     }
 
-    // Strategy 2: If data-title isn't used, look at standard index columns
+    // Strategy 2: Table header matching if data-title was not on tds
     if (code.isEmpty) {
-      final tds = row.querySelectorAll('td');
-      if (tds.length >= 4) {
-        final possibleCode = _clean(tds[0].text);
-        if (RegExp(r'^[A-Z]{2,6}\d{2,4}[A-Z]?$').hasMatch(possibleCode)) {
-          code = possibleCode;
-          name = _clean(tds[1].text);
-          if (tds.length >= 5) {
-            type = _clean(tds[2].text);
-            attText = tds[3].text;
-            internalText = tds[4].text;
-          } else {
-            attText = tds[2].text;
-            internalText = tds[3].text;
+      final table = row.parent?.parent ?? row.parent;
+      final ths = table?.querySelectorAll('th') ?? [];
+      if (ths.isNotEmpty && ths.length == tds.length) {
+        for (var i = 0; i < ths.length; i++) {
+          final thTitle = ths[i].text.toLowerCase().trim();
+          final text = _clean(tds[i].text);
+          if (thTitle.contains('code') && code.isEmpty) {
+            code = text;
+          } else if ((thTitle.contains('name') || thTitle.contains('title') || thTitle == 'subject') && name.isEmpty) {
+            name = text;
+          } else if (thTitle.contains('type') && type.isEmpty) {
+            type = text;
+          } else if (thTitle.contains('attendance') && attText.isEmpty) {
+            attText = text;
+          } else if ((thTitle.contains('internal') || thTitle.contains('asses')) && internalText.isEmpty) {
+            internalText = text;
           }
         }
       }
     }
 
+    // Strategy 3: Scan tds for a Course Code regex match
+    if (code.isEmpty) {
+      for (var i = 0; i < tds.length; i++) {
+        final t = _clean(tds[i].text);
+        if (RegExp(r'^[A-Z]{2,6}\d{2,5}[A-Z]?$').hasMatch(t)) {
+          code = t;
+          if (i + 1 < tds.length && name.isEmpty) {
+            name = _clean(tds[i + 1].text);
+          }
+          break;
+        }
+      }
+    }
+
     if (code.isEmpty) continue;
+    code = code.toUpperCase();
+    if (!seenCodes.add(code)) continue;
 
     final counts = _firstRatio(attText);
     final internal = _parseInternal(_clean(internalText));
@@ -148,7 +381,7 @@ List<AmizoneCourseRecord> parseCourseListPage(String html) {
     records.add(
       AmizoneCourseRecord(
         code: code,
-        name: name,
+        name: name.isEmpty ? code : name,
         attended: counts?.$1 ?? 0,
         held: counts?.$2 ?? 0,
         internalMarks: internal.$1,
@@ -161,6 +394,26 @@ List<AmizoneCourseRecord> parseCourseListPage(String html) {
   }
 
   return records;
+}
+
+/// Extracts available semester IDs from MyCourses, e.g. <select id="CurrentSemesterInfo">
+List<String> parseAvailableSemesters(String html) {
+  if (html.trim().isEmpty) return [];
+  final doc = html_parser.parse(html);
+  final select = doc.querySelector('#CurrentSemesterInfo, select[name*="Semester"], select[id*="Semester"]');
+  if (select == null) return [];
+  final sems = <String>[];
+  for (final option in select.querySelectorAll('option')) {
+    final val = (option.attributes['value'] ?? '').trim();
+    if (val.isNotEmpty && RegExp(r'^\d+$').hasMatch(val)) {
+      if (option.attributes.containsKey('selected')) {
+        sems.insert(0, val);
+      } else {
+        sems.add(val);
+      }
+    }
+  }
+  return sems;
 }
 
 /// Parses https://s.amizone.net/Examination/ExamSchedule.
@@ -454,6 +707,11 @@ String _normaliseName(String value) =>
 
 String _clean(String raw) =>
     raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+
+String _cleanSalutation(String name) => name
+    .replaceFirst(RegExp(r'^(?:Mr|Ms|Mrs|Dr|Prof)\.?\s+', caseSensitive: false), '')
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .trim();
 
 String _stripCode(String label, String code) {
   if (label.toUpperCase().startsWith(code.toUpperCase())) {

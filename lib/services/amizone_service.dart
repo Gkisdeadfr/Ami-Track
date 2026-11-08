@@ -14,6 +14,12 @@ import 'storage_service.dart';
 class AmizoneAccount {
   AmizoneAccount({
     required this.username,
+    this.name = '',
+    this.enrollmentNumber = '',
+    this.profilePictureUrl = '',
+    this.avatarBase64,
+    this.program = '',
+    this.batch = '',
     Map<String, String>? cookies,
     List<CourseAttendance>? courses,
     this.globalTarget = 95.01,
@@ -22,6 +28,12 @@ class AmizoneAccount {
         courses = courses ?? [];
 
   String username;
+  String name;
+  String enrollmentNumber;
+  String profilePictureUrl;
+  String? avatarBase64;
+  String program;
+  String batch;
   Map<String, String> cookies;
   List<CourseAttendance> courses;
   double globalTarget;
@@ -29,8 +41,26 @@ class AmizoneAccount {
 
   bool get hasSession => cookies.isNotEmpty;
 
+  String get displayName => name.isNotEmpty
+      ? name
+      : (enrollmentNumber.isNotEmpty ? enrollmentNumber : username);
+
+  String get displayEnrollment =>
+      enrollmentNumber.isNotEmpty ? enrollmentNumber : username;
+
+  String get initial {
+    final text = displayName.trim();
+    return text.isEmpty ? '?' : text.substring(0, 1).toUpperCase();
+  }
+
   Map<String, dynamic> toJson() => {
         'username': username,
+        'name': name,
+        'enrollmentNumber': enrollmentNumber,
+        'profilePictureUrl': profilePictureUrl,
+        'avatarBase64': avatarBase64,
+        'program': program,
+        'batch': batch,
         'cookies': cookies,
         'courses': courses.map((c) => c.toJson()).toList(),
         'globalTarget': globalTarget,
@@ -58,6 +88,12 @@ class AmizoneAccount {
     }
     return AmizoneAccount(
       username: (json['username'] as String? ?? '').trim(),
+      name: (json['name'] as String? ?? '').trim(),
+      enrollmentNumber: (json['enrollmentNumber'] as String? ?? '').trim(),
+      profilePictureUrl: (json['profilePictureUrl'] as String? ?? '').trim(),
+      avatarBase64: json['avatarBase64'] as String?,
+      program: (json['program'] as String? ?? '').trim(),
+      batch: (json['batch'] as String? ?? '').trim(),
       cookies: cookies,
       courses: courses,
       globalTarget: (json['globalTarget'] as num?)?.toDouble() ?? 95.01,
@@ -73,6 +109,8 @@ class AmizoneService extends ChangeNotifier {
   static const String portalUrl = 'https://s.amizone.net/';
   static const String _homePath = '/Home';
   static const String _coursesPath = '/Academics/MyCourses';
+  static const String _coursesSemWisePath = '/Academics/MyCourses/CourseListSemWise';
+  static const String _idCardPath = '/IDCard';
   static const String _examSchedulePath = '/Examination/ExamSchedule';
   static const String _examResultPath = '/Examination/ExamResult';
 
@@ -91,6 +129,12 @@ class AmizoneService extends ChangeNotifier {
   final List<AmizoneAccount> _accounts = [];
 
   String _username = '';
+  String _name = '';
+  String _enrollmentNumber = '';
+  String _profilePictureUrl = '';
+  String? _avatarBase64;
+  String _program = '';
+  String _batch = '';
   Map<String, String> _cookies = {};
   double _globalTarget = 95.01; // 95.01% is the cut-off for full 5/5 marks
   bool _isSignedIn = false;
@@ -101,6 +145,22 @@ class AmizoneService extends ChangeNotifier {
   final List<CourseAttendance> _courses = [];
 
   String get username => _username;
+  String get name => _name;
+  String get enrollmentNumber => _enrollmentNumber;
+  String get profilePictureUrl => _profilePictureUrl;
+  String? get avatarBase64 => _avatarBase64;
+  String get program => _program;
+  String get batch => _batch;
+  String get displayName => _name.isNotEmpty
+      ? _name
+      : (_enrollmentNumber.isNotEmpty ? _enrollmentNumber : _username);
+  String get displayEnrollment =>
+      _enrollmentNumber.isNotEmpty ? _enrollmentNumber : _username;
+  String get initial {
+    final text = displayName.trim();
+    return text.isEmpty ? '?' : text.substring(0, 1).toUpperCase();
+  }
+
   double get globalTarget => _globalTarget;
   bool get isLoading => _isLoading;
   bool get isSignedIn => _isSignedIn;
@@ -109,7 +169,9 @@ class AmizoneService extends ChangeNotifier {
   List<CourseAttendance> get courses => List.unmodifiable(_courses);
   List<AmizoneAccount> get accounts => List.unmodifiable(_accounts);
 
-  bool isCurrent(String username) => _same(username, _username);
+  bool isCurrent(String identifier) =>
+      _same(identifier, _username) ||
+      (_enrollmentNumber.isNotEmpty && _same(identifier, _enrollmentNumber));
 
   /// Loads every saved account and restores the one that was active last time.
   Future<void> init() async {
@@ -190,6 +252,12 @@ class AmizoneService extends ChangeNotifier {
 
   void _applyAccount(AmizoneAccount account) {
     _username = account.username;
+    _name = account.name;
+    _enrollmentNumber = account.enrollmentNumber;
+    _profilePictureUrl = account.profilePictureUrl;
+    _avatarBase64 = account.avatarBase64;
+    _program = account.program;
+    _batch = account.batch;
     _cookies = Map.of(account.cookies);
     _globalTarget = account.globalTarget;
     _lastSyncedAt = account.lastSyncedAt;
@@ -204,6 +272,12 @@ class AmizoneService extends ChangeNotifier {
     final account = _find(_username);
     final snapshot = AmizoneAccount(
       username: _username,
+      name: _name,
+      enrollmentNumber: _enrollmentNumber,
+      profilePictureUrl: _profilePictureUrl,
+      avatarBase64: _avatarBase64,
+      program: _program,
+      batch: _batch,
       cookies: Map.of(_cookies),
       courses: _courses.map((c) => CourseAttendance.fromJson(c.toJson())).toList(),
       globalTarget: _globalTarget,
@@ -214,6 +288,12 @@ class AmizoneService extends ChangeNotifier {
     } else {
       account
         ..username = snapshot.username
+        ..name = snapshot.name
+        ..enrollmentNumber = snapshot.enrollmentNumber
+        ..profilePictureUrl = snapshot.profilePictureUrl
+        ..avatarBase64 = snapshot.avatarBase64
+        ..program = snapshot.program
+        ..batch = snapshot.batch
         ..cookies = snapshot.cookies
         ..courses = snapshot.courses
         ..globalTarget = snapshot.globalTarget
@@ -231,9 +311,12 @@ class AmizoneService extends ChangeNotifier {
     _isSignedIn = false;
   }
 
-  AmizoneAccount? _find(String username) {
+  AmizoneAccount? _find(String identifier) {
     for (final account in _accounts) {
-      if (_same(account.username, username)) return account;
+      if (_same(account.username, identifier) ||
+          (account.enrollmentNumber.isNotEmpty && _same(account.enrollmentNumber, identifier))) {
+        return account;
+      }
     }
     return null;
   }
@@ -284,6 +367,7 @@ class AmizoneService extends ChangeNotifier {
       }
       _isSignedIn = true;
       await _applyScrapedData(home);
+      await _scrapeStudentProfile(home);
       unawaited(_scrapeFullAmizoneData());
       return true;
     } catch (error) {
@@ -348,6 +432,7 @@ class AmizoneService extends ChangeNotifier {
       await _writeAccounts();
       await _reloadSideStores();
       await _applyScrapedData(home);
+      await _scrapeStudentProfile(home);
       await _scrapeFullAmizoneData();
       return true;
     } catch (error) {
@@ -437,19 +522,23 @@ class AmizoneService extends ChangeNotifier {
           _statusMessage = 'Session expired. Please sign in again.';
           return false;
         }
-        final count = await _applyScrapedData(retry);
+        await _applyScrapedData(retry);
+        await _scrapeStudentProfile(retry);
         await _scrapeFullAmizoneData();
+        final count = _courses.length;
         _statusMessage = 'Switched to $_username. Synced $count subjects.';
         return count > 0;
       }
-      final count = await _applyScrapedData(home);
+      await _applyScrapedData(home);
+      await _scrapeStudentProfile(home);
       await _scrapeFullAmizoneData();
-      if (count == 0) {
+      final totalCount = _courses.length;
+      if (totalCount == 0) {
         _statusMessage =
             'Signed in, but Amizone returned no attendance rows. The portal layout may have changed.';
         return false;
       }
-      _statusMessage = 'Synced $count subjects from Amizone.';
+      _statusMessage = 'Synced $totalCount subjects from Amizone.';
       return true;
     } catch (error) {
       debugPrint('Amizone refresh failed: $error');
@@ -508,7 +597,28 @@ class AmizoneService extends ChangeNotifier {
     try {
       final coursesHtml = await _get(_coursesPath);
       if (!isAmizoneLoginPage(coursesHtml)) {
-        final details = parseCourseListPage(coursesHtml);
+        var details = parseCourseListPage(coursesHtml);
+
+        // If the initial coursesHtml was empty or only shell (requiring semester AJAX POST)
+        if (details.isEmpty) {
+          final availableSems = parseAvailableSemesters(coursesHtml);
+          final semsToTry = availableSems.isNotEmpty
+              ? availableSems
+              : ['4', '1', '2', '3', '5', '6', '7', '8'];
+          for (final sem in semsToTry) {
+            try {
+              final semHtml = await _post(_coursesSemWisePath, {'sem': sem});
+              if (!isAmizoneLoginPage(semHtml)) {
+                final semCourses = parseCourseListPage(semHtml);
+                if (semCourses.isNotEmpty) {
+                  details = semCourses;
+                  break;
+                }
+              }
+            } catch (_) {}
+          }
+        }
+
         if (details.isNotEmpty) {
           // If we had no courses from /Home, populate from /Academics/MyCourses
           if (_courses.isEmpty) {
@@ -596,9 +706,66 @@ class AmizoneService extends ChangeNotifier {
       debugPrint('Amizone exam result scrape failed: $error');
     }
 
+    if (_courses.isNotEmpty) {
+      _lastSyncedAt = DateTime.now();
+    }
     _captureActive();
     await _writeAccounts();
     notifyListeners();
+  }
+
+  /// Scrapes the student's name, enrollment number, and headshot.
+  Future<void> _scrapeStudentProfile(String homeHtml) async {
+    try {
+      var profile = parseStudentProfileFromHome(homeHtml);
+
+      try {
+        final idCardHtml = await _get(_idCardPath);
+        if (!isAmizoneLoginPage(idCardHtml)) {
+          final idProfile = parseStudentProfileFromIdCard(idCardHtml);
+          profile = profile.mergeWith(idProfile);
+        }
+      } catch (e) {
+        debugPrint('IDCard profile fetch error: $e');
+      }
+
+      if (profile.name.isNotEmpty) _name = profile.name;
+      if (profile.enrollmentNumber.isNotEmpty) _enrollmentNumber = profile.enrollmentNumber;
+      if (profile.program.isNotEmpty) _program = profile.program;
+      if (profile.batch.isNotEmpty) _batch = profile.batch;
+      if (profile.profilePictureUrl.isNotEmpty) {
+        _profilePictureUrl = profile.profilePictureUrl;
+        final base64Image = await _downloadAvatarBase64(profile.profilePictureUrl);
+        if (base64Image != null && base64Image.isNotEmpty) {
+          _avatarBase64 = base64Image;
+        }
+      }
+
+      _captureActive();
+      await _writeAccounts();
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Student profile scraping error: $e');
+    }
+  }
+
+  Future<String?> _downloadAvatarBase64(String imageUrl) async {
+    try {
+      final uri = Uri.parse(
+        imageUrl.startsWith('http')
+            ? imageUrl
+            : '$portalUrl${imageUrl.replaceFirst(RegExp(r'^/'), '')}',
+      );
+      final response = await http
+          .get(uri, headers: _requestHeaders)
+          .timeout(const Duration(seconds: 12));
+      if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
+        return base64Encode(response.bodyBytes);
+      }
+    } catch (e) {
+      debugPrint('Avatar download error: $e');
+    }
+    return null;
   }
 
   CourseAttendance? _courseByCode(String code) {
@@ -662,6 +829,21 @@ class AmizoneService extends ChangeNotifier {
   Future<String> _get(String path) async {
     final response = await http
         .get(Uri.parse('$portalUrl${path.replaceFirst(RegExp(r'^/'), '')}'), headers: _requestHeaders)
+        .timeout(const Duration(seconds: 20));
+    _absorbCookies(response);
+    return response.body;
+  }
+
+  Future<String> _post(String path, Map<String, String> body) async {
+    final headers = Map<String, String>.from(_requestHeaders);
+    headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=UTF-8';
+    headers['X-Requested-With'] = 'XMLHttpRequest';
+    final response = await http
+        .post(
+          Uri.parse('$portalUrl${path.replaceFirst(RegExp(r'^/'), '')}'),
+          headers: headers,
+          body: body,
+        )
         .timeout(const Duration(seconds: 20));
     _absorbCookies(response);
     return response.body;
