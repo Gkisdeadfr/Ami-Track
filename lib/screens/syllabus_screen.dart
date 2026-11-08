@@ -1,6 +1,14 @@
 import 'package:flutter/material.dart';
 import '../models/syllabus.dart';
+import '../services/amizone_service.dart';
 import '../services/storage_service.dart';
+
+enum SyllabusSubjectSort {
+  defaultOrder,
+  leastProgressFirst,
+  mostProgressFirst,
+  codeAsc,
+}
 
 class SyllabusScreen extends StatefulWidget {
   final String? initialSubjectId;
@@ -13,6 +21,7 @@ class SyllabusScreen extends StatefulWidget {
 class _SyllabusScreenState extends State<SyllabusScreen> {
   int _selectedSubjectIndex = 0;
   TopicStatus? _statusFilter;
+  SyllabusSubjectSort _subjectSort = SyllabusSubjectSort.defaultOrder;
 
   @override
   void initState() {
@@ -26,46 +35,108 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
     }
   }
 
+  List<SyllabusSubject> _getSortedSubjects(List<SyllabusSubject> list) {
+    final sorted = List<SyllabusSubject>.from(list);
+    switch (_subjectSort) {
+      case SyllabusSubjectSort.defaultOrder:
+        break;
+      case SyllabusSubjectSort.leastProgressFirst:
+        sorted.sort((a, b) => a.progressPercentage.compareTo(b.progressPercentage));
+        break;
+      case SyllabusSubjectSort.mostProgressFirst:
+        sorted.sort((a, b) => b.progressPercentage.compareTo(a.progressPercentage));
+        break;
+      case SyllabusSubjectSort.codeAsc:
+        sorted.sort((a, b) => a.subjectCode.compareTo(b.subjectCode));
+        break;
+    }
+    return sorted;
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
-      animation: StorageService.instance,
+      animation: Listenable.merge([StorageService.instance, AmizoneService.instance]),
       builder: (context, _) {
-        final subjects = StorageService.instance.syllabus;
-        if (subjects.isEmpty) {
-          return const Scaffold(
-            body: Center(child: Text('No subjects loaded.')),
+        final theme = Theme.of(context);
+        final rawSubjects = StorageService.instance.syllabus;
+        if (rawSubjects.isEmpty) {
+          return Scaffold(
+            appBar: AppBar(title: const Text('Syllabus Tracker')),
+            body: const Center(child: Text('No subjects loaded.')),
           );
         }
 
+        final subjects = _getSortedSubjects(rawSubjects);
         if (_selectedSubjectIndex >= subjects.length) {
           _selectedSubjectIndex = 0;
         }
         final currentSubject = subjects[_selectedSubjectIndex];
 
+        // Check if Amizone has internal marks or attendance for this course
+        final amizoneMatch = AmizoneService.instance.courses.cast().firstWhere(
+          (c) => c.subjectCode.toUpperCase() == currentSubject.subjectCode.toUpperCase(),
+          orElse: () => null,
+        );
+
         return Scaffold(
-          backgroundColor: const Color(0xFFF8FAFC),
           appBar: AppBar(
-            elevation: 0,
-            backgroundColor: Colors.indigo.shade800,
             title: const Text(
-              'Syllabus & Revision Tracker',
+              'Syllabus & Revision',
               style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 19,
-                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 18,
               ),
             ),
+            actions: [
+              PopupMenuButton<SyllabusSubjectSort>(
+                icon: const Icon(Icons.sort, color: Colors.white),
+                tooltip: 'Sort subjects',
+                onSelected: (sort) => setState(() => _subjectSort = sort),
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: SyllabusSubjectSort.defaultOrder,
+                    child: Text('Default Order'),
+                  ),
+                  const PopupMenuItem(
+                    value: SyllabusSubjectSort.leastProgressFirst,
+                    child: Text('Least Progress First'),
+                  ),
+                  const PopupMenuItem(
+                    value: SyllabusSubjectSort.mostProgressFirst,
+                    child: Text('Most Progress First'),
+                  ),
+                  const PopupMenuItem(
+                    value: SyllabusSubjectSort.codeAsc,
+                    child: Text('Subject Code (A-Z)'),
+                  ),
+                ],
+              ),
+              IconButton(
+                icon: const Icon(Icons.sync, color: Colors.white),
+                tooltip: 'Sync with Amizone courses',
+                onPressed: () async {
+                  final messenger = ScaffoldMessenger.of(context);
+                  await AmizoneService.instance.refresh();
+                  messenger.showSnackBar(
+                    SnackBar(
+                      content: Text(AmizoneService.instance.statusMessage ?? 'Synced!'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                },
+              ),
+            ],
           ),
           body: Column(
             children: [
               // Horizontal subject picker
               Container(
-                color: Colors.white,
+                color: theme.cardColor,
                 padding: const EdgeInsets.symmetric(vertical: 10),
                 child: SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
                   child: Row(
                     children: subjects.asMap().entries.map((entry) {
                       final idx = entry.key;
@@ -78,13 +149,13 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
                             sub.subjectCode,
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
-                              color: isSelected ? Colors.white : Colors.grey.shade800,
-                              fontSize: 13,
+                              color: isSelected ? Colors.white : theme.colorScheme.onSurface,
+                              fontSize: 12,
                             ),
                           ),
                           selected: isSelected,
-                          selectedColor: Colors.indigo.shade800,
-                          backgroundColor: Colors.grey.shade100,
+                          selectedColor: theme.colorScheme.primary,
+                          backgroundColor: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
                           onSelected: (val) {
                             if (val) {
                               setState(() {
@@ -104,18 +175,15 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
                 margin: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: [
-                      Colors.indigo.shade900,
-                      Colors.indigo.shade700,
-                    ],
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF1E3A8A), Color(0xFF1E40AF), Color(0xFF2563EB)],
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                   ),
-                  borderRadius: BorderRadius.circular(16),
+                  borderRadius: BorderRadius.circular(18),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.indigo.withOpacity(0.2),
+                      color: const Color(0xFF1E3A8A).withValues(alpha: 0.25),
                       blurRadius: 10,
                       offset: const Offset(0, 4),
                     ),
@@ -131,19 +199,16 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
                           child: Text(
                             currentSubject.subjectName,
                             style: const TextStyle(
-                              fontSize: 17,
+                              fontSize: 16,
                               fontWeight: FontWeight.bold,
                               color: Colors.white,
                             ),
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 4,
-                          ),
+                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                           decoration: BoxDecoration(
-                            color: Colors.white.withOpacity(0.18),
+                            color: Colors.white.withValues(alpha: 0.18),
                             borderRadius: BorderRadius.circular(12),
                           ),
                           child: Text(
@@ -151,23 +216,48 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
                             style: const TextStyle(
                               fontWeight: FontWeight.bold,
                               color: Colors.white,
-                              fontSize: 13,
+                              fontSize: 12,
                             ),
                           ),
                         ),
                       ],
                     ),
+                    if (amizoneMatch != null) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          if (amizoneMatch.internalMarks > 0) ...[
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.amberAccent.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                'Internal: ${amizoneMatch.internalMarks.toStringAsFixed(1)}/${amizoneMatch.maxInternal.toInt()}',
+                                style: const TextStyle(color: Colors.amberAccent, fontSize: 11, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                          ],
+                          Text(
+                            'Attendance: ${amizoneMatch.percentage.toStringAsFixed(1)}% (${amizoneMatch.attended}/${amizoneMatch.held})',
+                            style: const TextStyle(color: Colors.white70, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     ClipRRect(
                       borderRadius: BorderRadius.circular(8),
                       child: LinearProgressIndicator(
                         value: currentSubject.progressPercentage,
-                        minHeight: 8,
+                        minHeight: 7,
                         backgroundColor: Colors.white24,
                         valueColor: const AlwaysStoppedAnimation<Color>(Colors.amberAccent),
                       ),
                     ),
-                    const SizedBox(height: 14),
+                    const SizedBox(height: 12),
                     // Quick stats row
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -189,14 +279,14 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
                 child: Row(
                   children: [
                     FilterChip(
-                      label: const Text('All Topics'),
+                      label: const Text('All Topics', style: TextStyle(fontSize: 11)),
                       selected: _statusFilter == null,
                       onSelected: (_) => setState(() => _statusFilter = null),
                     ),
                     const SizedBox(width: 8),
                     FilterChip(
                       avatar: const Icon(Icons.replay, size: 14, color: Colors.deepOrange),
-                      label: const Text('Needs Revision'),
+                      label: const Text('Needs Revision', style: TextStyle(fontSize: 11)),
                       selected: _statusFilter == TopicStatus.needsRevision,
                       onSelected: (val) => setState(() =>
                           _statusFilter = val ? TopicStatus.needsRevision : null),
@@ -204,7 +294,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
                     const SizedBox(width: 8),
                     FilterChip(
                       avatar: const Icon(Icons.timelapse, size: 14, color: Colors.blue),
-                      label: const Text('In Progress'),
+                      label: const Text('In Progress', style: TextStyle(fontSize: 11)),
                       selected: _statusFilter == TopicStatus.inProgress,
                       onSelected: (val) => setState(() =>
                           _statusFilter = val ? TopicStatus.inProgress : null),
@@ -212,7 +302,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
                     const SizedBox(width: 8),
                     FilterChip(
                       avatar: const Icon(Icons.check_circle, size: 14, color: Colors.green),
-                      label: const Text('Done'),
+                      label: const Text('Done', style: TextStyle(fontSize: 11)),
                       selected: _statusFilter == TopicStatus.done,
                       onSelected: (val) => setState(() =>
                           _statusFilter = val ? TopicStatus.done : null),
@@ -220,7 +310,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
                     const SizedBox(width: 8),
                     FilterChip(
                       avatar: const Icon(Icons.radio_button_unchecked, size: 14, color: Colors.grey),
-                      label: const Text('Not Started'),
+                      label: const Text('Not Started', style: TextStyle(fontSize: 11)),
                       selected: _statusFilter == TopicStatus.notStarted,
                       onSelected: (val) => setState(() =>
                           _statusFilter = val ? TopicStatus.notStarted : null),
@@ -250,12 +340,12 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
                     return Container(
                       margin: const EdgeInsets.only(bottom: 12),
                       decoration: BoxDecoration(
-                        color: Colors.white,
+                        color: theme.cardColor,
                         borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.grey.shade200),
+                        border: Border.all(color: theme.dividerColor),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withOpacity(0.02),
+                            color: Colors.black.withValues(alpha: 0.02),
                             blurRadius: 6,
                             offset: const Offset(0, 2),
                           ),
@@ -267,17 +357,17 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
                           initiallyExpanded: true,
                           title: Text(
                             module.moduleTitle,
-                            style: const TextStyle(
+                            style: TextStyle(
                               fontWeight: FontWeight.bold,
-                              fontSize: 15,
-                              color: Color(0xFF1E293B),
+                              fontSize: 14,
+                              color: theme.colorScheme.onSurface,
                             ),
                           ),
                           subtitle: Text(
-                            'Weightage: ${module.weightage.toInt()}% • $modCompleted/${module.topics.length} completed',
+                            'Weightage: ${module.weightage.toInt()}% • $modCompleted/${module.topics.length} done',
                             style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade600,
+                              fontSize: 11,
+                              color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
                             ),
                           ),
                           trailing: IconButton(
@@ -290,7 +380,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
                             ),
                           ),
                           children: [
-                            const Divider(height: 1),
+                            Divider(height: 1, color: theme.dividerColor),
                             ...filteredTopics.map((topic) {
                               return _buildTopicRow(
                                 context,
@@ -340,29 +430,30 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
     String moduleId,
     SyllabusTopic topic,
   ) {
+    final theme = Theme.of(context);
     Color statusBgColor;
     Color statusTextColor;
     IconData statusIcon;
 
     switch (topic.status) {
       case TopicStatus.notStarted:
-        statusBgColor = Colors.grey.shade100;
-        statusTextColor = Colors.grey.shade700;
+        statusBgColor = Colors.grey.withValues(alpha: 0.1);
+        statusTextColor = Colors.grey;
         statusIcon = Icons.radio_button_unchecked;
         break;
       case TopicStatus.inProgress:
-        statusBgColor = Colors.blue.shade50;
-        statusTextColor = Colors.blue.shade800;
+        statusBgColor = Colors.blue.withValues(alpha: 0.12);
+        statusTextColor = Colors.blue;
         statusIcon = Icons.timelapse;
         break;
       case TopicStatus.done:
-        statusBgColor = Colors.green.shade50;
-        statusTextColor = Colors.green.shade800;
+        statusBgColor = Colors.green.withValues(alpha: 0.12);
+        statusTextColor = Colors.green;
         statusIcon = Icons.check_circle;
         break;
       case TopicStatus.needsRevision:
-        statusBgColor = Colors.purple.shade50;
-        statusTextColor = Colors.purple.shade800;
+        statusBgColor = Colors.purple.withValues(alpha: 0.12);
+        statusTextColor = Colors.purpleAccent;
         statusIcon = Icons.replay;
         break;
     }
@@ -373,7 +464,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          border: Border(bottom: BorderSide(color: Colors.grey.shade100)),
+          border: Border(bottom: BorderSide(color: theme.dividerColor.withValues(alpha: 0.5))),
         ),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -390,14 +481,14 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
                   Text(
                     topic.title,
                     style: TextStyle(
-                      fontSize: 14,
+                      fontSize: 13,
                       fontWeight: FontWeight.w500,
                       decoration: topic.status == TopicStatus.done
                           ? TextDecoration.lineThrough
                           : null,
                       color: topic.status == TopicStatus.done
-                          ? Colors.grey.shade500
-                          : const Color(0xFF1E293B),
+                          ? theme.colorScheme.onSurface.withValues(alpha: 0.4)
+                          : theme.colorScheme.onSurface,
                     ),
                   ),
                 ],
@@ -411,7 +502,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
                 decoration: BoxDecoration(
                   color: statusBgColor,
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: statusTextColor.withOpacity(0.3)),
+                  border: Border.all(color: statusTextColor.withValues(alpha: 0.3)),
                 ),
                 child: Text(
                   topic.status.label,
@@ -485,24 +576,11 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
                 ),
                 const SizedBox(height: 16),
                 ...TopicStatus.values.map((status) {
+                  final isSelected = topic.status == status;
                   return ListTile(
                     dense: true,
-                    title: Text(status.label),
-                    leading: Radio<TopicStatus>(
-                      value: status,
-                      groupValue: topic.status,
-                      onChanged: (val) {
-                        if (val != null) {
-                          StorageService.instance.updateTopicStatus(
-                            subjectId,
-                            moduleId,
-                            topic.id,
-                            val,
-                          );
-                          Navigator.pop(context);
-                        }
-                      },
-                    ),
+                    title: Text(status.label, style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal)),
+                    trailing: isSelected ? const Icon(Icons.check, color: Colors.blue) : null,
                     onTap: () {
                       StorageService.instance.updateTopicStatus(
                         subjectId,
@@ -547,7 +625,7 @@ class _SyllabusScreenState extends State<SyllabusScreen> {
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.indigo.shade800,
+                backgroundColor: const Color(0xFF1E3A8A),
               ),
               onPressed: () {
                 if (controller.text.trim().isNotEmpty) {

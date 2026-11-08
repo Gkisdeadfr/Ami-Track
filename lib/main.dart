@@ -10,38 +10,35 @@ import 'screens/syllabus_screen.dart';
 import 'services/amizone_service.dart';
 import 'services/scraper_service.dart';
 import 'services/storage_service.dart';
+import 'services/theme_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await StorageService.instance.init();
-  await ScraperService.instance.init();
+  await ThemeService.instance.init();
   await AmizoneService.instance.init();
-  runApp(const CampusTrackApp());
+  final activeUser = AmizoneService.instance.username;
+  await StorageService.instance.bindAccount(activeUser);
+  await ScraperService.instance.bindAccount(activeUser);
+  runApp(const AmiTrackApp());
 }
 
-class CampusTrackApp extends StatelessWidget {
-  const CampusTrackApp({super.key});
+class AmiTrackApp extends StatelessWidget {
+  const AmiTrackApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'CampusTrack',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        useMaterial3: true,
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1E3A8A),
-          primary: const Color(0xFF1E3A8A),
-          secondary: const Color(0xFF0D9488),
-        ),
-        fontFamily: 'Roboto',
-        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
-        appBarTheme: const AppBarTheme(
-          elevation: 0,
-          centerTitle: false,
-        ),
-      ),
-      home: const AppRoot(),
+    return AnimatedBuilder(
+      animation: ThemeService.instance,
+      builder: (context, _) {
+        return MaterialApp(
+          title: 'Ami-Track',
+          debugShowCheckedModeBanner: false,
+          theme: ThemeService.lightTheme,
+          darkTheme: ThemeService.darkTheme,
+          themeMode: ThemeService.instance.themeMode,
+          home: const AppRoot(),
+        );
+      },
     );
   }
 }
@@ -82,19 +79,21 @@ class _AppRootState extends State<AppRoot> {
   }
 
   Future<void> _restoreSession() async {
-    var signedIn = false;
-    try {
-      signedIn = await AmizoneService.instance.restoreSession();
-    } catch (_) {
-      signedIn = false;
-    }
+    // When the app starts, show the user selection screen (macOS style)
+    // allowing 1-tap login to existing accounts without password,
+    // or new account login with password.
+    await Future.delayed(const Duration(milliseconds: 300));
     if (!mounted) return;
-    setState(() => _phase = signedIn ? _Phase.signedIn : _Phase.signedOut);
+    setState(() => _phase = _Phase.signedOut);
   }
 
   Future<void> _signOut() async {
-    await AmizoneService.instance.signOut();
+    final stillSignedIn = await AmizoneService.instance.signOut();
     if (!mounted) return;
+    if (!stillSignedIn) setState(() => _phase = _Phase.signedOut);
+  }
+
+  void _onSwitchAccount() {
     setState(() => _phase = _Phase.signedOut);
   }
 
@@ -108,7 +107,10 @@ class _AppRootState extends State<AppRoot> {
           onSignedIn: () => setState(() => _phase = _Phase.signedIn),
         );
       case _Phase.signedIn:
-        return MainNavigationScreen(onSignOut: _signOut);
+        return MainNavigationScreen(
+          onSignOut: _signOut,
+          onSwitchAccount: _onSwitchAccount,
+        );
     }
   }
 }
@@ -134,7 +136,7 @@ class _SplashScreen extends StatelessWidget {
               Icon(Icons.school_outlined, color: Colors.white, size: 56),
               SizedBox(height: 16),
               Text(
-                'CampusTrack',
+                'Ami-Track',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 24,
@@ -162,9 +164,14 @@ class _SplashScreen extends StatelessWidget {
 }
 
 class MainNavigationScreen extends StatefulWidget {
-  const MainNavigationScreen({super.key, required this.onSignOut});
+  const MainNavigationScreen({
+    super.key,
+    required this.onSignOut,
+    this.onSwitchAccount,
+  });
 
   final VoidCallback onSignOut;
+  final VoidCallback? onSwitchAccount;
 
   @override
   State<MainNavigationScreen> createState() => _MainNavigationScreenState();
@@ -192,6 +199,7 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
           });
         },
         onSignOut: widget.onSignOut,
+        onSwitchAccount: widget.onSwitchAccount,
       ),
       const AttendanceScreen(),
       const ExamsScreen(),
@@ -199,6 +207,9 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       const AssignmentsScreen(),
       const PYQScreen(),
     ];
+
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
 
     return Scaffold(
       body: IndexedStack(
@@ -208,38 +219,40 @@ class _MainNavigationScreenState extends State<MainNavigationScreen> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentIndex,
         onDestinationSelected: _onTabSelect,
-        indicatorColor: Colors.indigo.shade100,
-        backgroundColor: Colors.white,
+        indicatorColor: isDark
+            ? theme.colorScheme.primary.withValues(alpha: 0.22)
+            : Colors.indigo.shade100,
+        backgroundColor: theme.cardColor,
         elevation: 8,
-        destinations: const [
+        destinations: [
           NavigationDestination(
-            icon: Icon(Icons.dashboard_outlined),
-            selectedIcon: Icon(Icons.dashboard, color: Color(0xFF1E3A8A)),
+            icon: const Icon(Icons.dashboard_outlined),
+            selectedIcon: Icon(Icons.dashboard, color: theme.colorScheme.primary),
             label: 'Home',
           ),
           NavigationDestination(
-            icon: Icon(Icons.co_present_outlined),
-            selectedIcon: Icon(Icons.co_present, color: Color(0xFF1E3A8A)),
+            icon: const Icon(Icons.co_present_outlined),
+            selectedIcon: Icon(Icons.co_present, color: theme.colorScheme.primary),
             label: 'Attendance',
           ),
           NavigationDestination(
-            icon: Icon(Icons.calendar_month_outlined),
-            selectedIcon: Icon(Icons.calendar_month, color: Color(0xFF1E3A8A)),
+            icon: const Icon(Icons.calendar_month_outlined),
+            selectedIcon: Icon(Icons.calendar_month, color: theme.colorScheme.primary),
             label: 'Exams',
           ),
           NavigationDestination(
-            icon: Icon(Icons.checklist_rtl_outlined),
-            selectedIcon: Icon(Icons.checklist_rtl, color: Color(0xFF1E3A8A)),
+            icon: const Icon(Icons.checklist_rtl_outlined),
+            selectedIcon: Icon(Icons.checklist_rtl, color: theme.colorScheme.primary),
             label: 'Syllabus',
           ),
           NavigationDestination(
-            icon: Icon(Icons.assignment_outlined),
-            selectedIcon: Icon(Icons.assignment, color: Color(0xFF1E3A8A)),
+            icon: const Icon(Icons.assignment_outlined),
+            selectedIcon: Icon(Icons.assignment, color: theme.colorScheme.primary),
             label: 'Tasks',
           ),
           NavigationDestination(
-            icon: Icon(Icons.folder_shared_outlined),
-            selectedIcon: Icon(Icons.folder_shared, color: Color(0xFF1E3A8A)),
+            icon: const Icon(Icons.folder_shared_outlined),
+            selectedIcon: Icon(Icons.folder_shared, color: theme.colorScheme.primary),
             label: 'Library',
           ),
         ],

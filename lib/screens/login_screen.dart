@@ -1,16 +1,25 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 import '../services/amizone_service.dart';
 import '../services/scraper_service.dart';
+import '../services/theme_service.dart';
 import 'amizone_web_login_screen.dart';
 
 enum _Stage { idle, verifying, scrapingAttendance, scrapingLibrary }
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key, required this.onSignedIn});
+  const LoginScreen({
+    super.key,
+    required this.onSignedIn,
+    this.initialUsername,
+    this.startInAddMode = false,
+  });
 
   final VoidCallback onSignedIn;
+  final String? initialUsername;
+  final bool startInAddMode;
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -24,13 +33,15 @@ class _LoginScreenState extends State<LoginScreen> {
   _Stage _stage = _Stage.idle;
   bool _showPassword = false;
   String? _error;
+  late bool _showNewAccountForm;
 
   bool get _busy => _stage != _Stage.idle;
 
   @override
   void initState() {
     super.initState();
-    _userController.text = AmizoneService.instance.username;
+    _showNewAccountForm = widget.startInAddMode || AmizoneService.instance.accounts.isEmpty;
+    _userController.text = widget.initialUsername ?? '';
   }
 
   @override
@@ -43,24 +54,57 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final accounts = AmizoneService.instance.accounts;
+
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: theme.scaffoldBackgroundColor,
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        actions: [
+          IconButton(
+            icon: Icon(
+              isDark ? Icons.light_mode_outlined : Icons.dark_mode_outlined,
+              color: theme.colorScheme.onSurface,
+            ),
+            tooltip: isDark ? 'Light Mode' : 'Dark Mode',
+            onPressed: () => ThemeService.instance.toggleTheme(),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: Center(
           child: SingleChildScrollView(
-            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 28),
+            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 20),
             child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildBrand(),
-                  const SizedBox(height: 26),
-                  _buildForm(context),
-                  const SizedBox(height: 18),
-                  _buildPrivacyNote(),
-                ],
-              ),
+              constraints: const BoxConstraints(maxWidth: 500),
+              child: accounts.isNotEmpty && !_showNewAccountForm
+                  ? _buildMacOsUserSelection(context, accounts)
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        _buildBrand(),
+                        const SizedBox(height: 24),
+                        if (accounts.isNotEmpty) ...[
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              onPressed: _busy
+                                  ? null
+                                  : () => setState(() => _showNewAccountForm = false),
+                              icon: const Icon(Icons.arrow_back, size: 16),
+                              label: const Text('Back to User Accounts'),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                        _buildForm(context),
+                        const SizedBox(height: 18),
+                        _buildPrivacyNote(),
+                      ],
+                    ),
             ),
           ),
         ),
@@ -69,21 +113,22 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildBrand() {
+    final theme = Theme.of(context);
     return Column(
       children: [
         Container(
           width: 68,
           height: 68,
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [Colors.indigo.shade800, Colors.blue.shade700],
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1E3A8A), Color(0xFF2563EB)],
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
             ),
             borderRadius: BorderRadius.circular(20),
             boxShadow: [
               BoxShadow(
-                color: Colors.indigo.withValues(alpha: 0.28),
+                color: const Color(0xFF1E3A8A).withValues(alpha: 0.28),
                 blurRadius: 16,
                 offset: const Offset(0, 8),
               ),
@@ -92,33 +137,243 @@ class _LoginScreenState extends State<LoginScreen> {
           child: const Icon(Icons.school_outlined, color: Colors.white, size: 34),
         ),
         const SizedBox(height: 16),
-        const Text(
-          'CampusTrack',
+        Text(
+          'Ami-Track',
           style: TextStyle(
             fontSize: 26,
             fontWeight: FontWeight.w800,
-            color: Color(0xFF0F172A),
+            color: theme.colorScheme.onSurface,
             letterSpacing: -0.5,
           ),
         ),
         const SizedBox(height: 6),
         Text(
-          'Sign in with your Amizone account. We scrape your attendance, marks '
-          'and semester resources, then keep them on this device.',
+          'Sign in with your Amizone account to sync your attendance, marks, syllabus, and examination schedule.',
           textAlign: TextAlign.center,
-          style: TextStyle(fontSize: 13, height: 1.4, color: Colors.grey.shade600),
+          style: TextStyle(fontSize: 13, height: 1.4, color: theme.colorScheme.onSurface.withValues(alpha: 0.65)),
+        ),
+      ],
+    );
+  }
+
+  /// macOS-style user profile selection screen
+  Widget _buildMacOsUserSelection(BuildContext context, List<AmizoneAccount> accounts) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        // App logo & Lock header
+        Container(
+          width: 64,
+          height: 64,
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [Color(0xFF1E3A8A), Color(0xFF2563EB)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF1E3A8A).withValues(alpha: 0.25),
+                blurRadius: 14,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: const Icon(Icons.school_outlined, color: Colors.white, size: 32),
+        ),
+        const SizedBox(height: 16),
+        Text(
+          'Ami-Track',
+          style: TextStyle(
+            fontSize: 28,
+            fontWeight: FontWeight.w800,
+            color: theme.colorScheme.onSurface,
+            letterSpacing: -0.5,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          'Select your account to continue',
+          style: TextStyle(
+            fontSize: 14,
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.65),
+          ),
+        ),
+        const SizedBox(height: 32),
+
+        // User accounts grid/list
+        Wrap(
+          spacing: 20,
+          runSpacing: 20,
+          alignment: WrapAlignment.center,
+          children: accounts.map((account) {
+            final isCurrent = AmizoneService.instance.isCurrent(account.username);
+            final initial = account.username.trim().isEmpty
+                ? '?'
+                : account.username.trim().substring(0, 1).toUpperCase();
+
+            return InkWell(
+              onTap: _busy
+                  ? null
+                  : () async {
+                      setState(() => _stage = _Stage.verifying);
+                      final ok = await AmizoneService.instance.switchTo(account.username);
+                      if (!mounted) return;
+                      setState(() => _stage = _Stage.idle);
+                      if (ok) {
+                        widget.onSignedIn();
+                      } else {
+                        // Needs re-auth
+                        setState(() {
+                          _showNewAccountForm = true;
+                          _userController.text = account.username;
+                          _error = 'Session expired. Please enter password to re-authenticate.';
+                        });
+                      }
+                    },
+              borderRadius: BorderRadius.circular(20),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                width: 140,
+                padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 12),
+                decoration: BoxDecoration(
+                  color: theme.cardColor,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(
+                    color: isCurrent
+                        ? theme.colorScheme.primary
+                        : theme.dividerColor,
+                    width: isCurrent ? 2.0 : 1.0,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withValues(alpha: isDark ? 0.2 : 0.04),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    // Avatar circle
+                    Stack(
+                      children: [
+                        CircleAvatar(
+                          radius: 36,
+                          backgroundColor: isCurrent
+                              ? const Color(0xFF1E3A8A)
+                              : theme.colorScheme.surfaceContainerHighest,
+                          child: Text(
+                            initial,
+                            style: TextStyle(
+                              fontSize: 26,
+                              fontWeight: FontWeight.bold,
+                              color: isCurrent ? Colors.white : theme.colorScheme.primary,
+                            ),
+                          ),
+                        ),
+                        Positioned(
+                          right: 0,
+                          bottom: 0,
+                          child: Container(
+                            width: 14,
+                            height: 14,
+                            decoration: BoxDecoration(
+                              color: account.hasSession ? Colors.green : Colors.grey,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: theme.cardColor, width: 2),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      account.username,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: theme.colorScheme.onSurface,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      account.courses.isNotEmpty
+                          ? '${account.courses.length} subjects'
+                          : 'Signed in',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    InkWell(
+                      onTap: () async {
+                        await AmizoneService.instance.removeAccount(account.username);
+                        if (mounted) setState(() {});
+                      },
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        child: Text(
+                          'Remove',
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.red.withValues(alpha: 0.8),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          }).toList(),
+        ),
+
+        const SizedBox(height: 36),
+
+        // New account login button (with password)
+        OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            side: BorderSide(color: theme.colorScheme.primary.withValues(alpha: 0.6)),
+          ),
+          onPressed: () {
+            setState(() {
+              _showNewAccountForm = true;
+              _userController.clear();
+              _passController.clear();
+              _error = null;
+            });
+          },
+          icon: const Icon(Icons.person_add_alt, size: 18),
+          label: const Text(
+            'New Account Login (With Password)',
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+          ),
         ),
       ],
     );
   }
 
   Widget _buildForm(BuildContext context) {
+    final theme = Theme.of(context);
     return Container(
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: theme.cardColor,
         borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: theme.dividerColor),
         boxShadow: [
           BoxShadow(
             color: Colors.black.withValues(alpha: 0.04),
@@ -132,19 +387,19 @@ class _LoginScreenState extends State<LoginScreen> {
         children: [
           Row(
             children: [
-              Icon(Icons.lock_outline, size: 18, color: Colors.indigo.shade800),
+              Icon(Icons.lock_outline, size: 18, color: theme.colorScheme.primary),
               const SizedBox(width: 8),
               Text(
                 'Amizone login',
                 style: TextStyle(
-                  fontSize: 15,
+                  fontSize: 16,
                   fontWeight: FontWeight.bold,
-                  color: Colors.indigo.shade900,
+                  color: theme.colorScheme.onSurface,
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 16),
           TextField(
             controller: _userController,
             enabled: !_busy,
@@ -152,8 +407,8 @@ class _LoginScreenState extends State<LoginScreen> {
             autocorrect: false,
             onSubmitted: (_) => _passFocus.requestFocus(),
             decoration: InputDecoration(
-              labelText: 'Enrollment number',
-              hintText: 'e.g. A23XXXXXXXX',
+              labelText: 'Amizone-ID',
+              hintText: 'e.g. XXXXXXXX',
               prefixIcon: const Icon(Icons.badge_outlined, size: 20),
               border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
             ),
@@ -184,7 +439,7 @@ class _LoginScreenState extends State<LoginScreen> {
             height: 48,
             child: FilledButton.icon(
               style: FilledButton.styleFrom(
-                backgroundColor: Colors.indigo.shade800,
+                backgroundColor: const Color(0xFF1E3A8A),
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               ),
               onPressed: _busy ? null : _submit,
@@ -210,19 +465,19 @@ class _LoginScreenState extends State<LoginScreen> {
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.red.shade50,
+                color: Colors.red.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: Colors.red.shade100),
+                border: Border.all(color: Colors.red.withValues(alpha: 0.2)),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.error_outline, size: 16, color: Colors.red.shade700),
+                  const Icon(Icons.error_outline, size: 16, color: Colors.red),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
                       _error!,
-                      style: TextStyle(fontSize: 12, color: Colors.red.shade800),
+                      style: const TextStyle(fontSize: 12, color: Colors.red),
                     ),
                   ),
                 ],
@@ -235,6 +490,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildProgress() {
+    final theme = Theme.of(context);
     final steps = <(String, bool, bool)>[
       (
         'Signing in on Amizone',
@@ -242,12 +498,12 @@ class _LoginScreenState extends State<LoginScreen> {
         _stage != _Stage.verifying,
       ),
       (
-        'Scraping attendance & internal marks',
+        'Scraping attendance, marks & syllabus',
         _stage == _Stage.scrapingAttendance,
         _stage == _Stage.scrapingLibrary,
       ),
       (
-        'Scraping the NexAcad library',
+        'Scraping exam schedule & results',
         _stage == _Stage.scrapingLibrary,
         false,
       ),
@@ -265,10 +521,10 @@ class _LoginScreenState extends State<LoginScreen> {
                 width: 18,
                 height: 18,
                 child: done
-                    ? Icon(Icons.check_circle, size: 18, color: Colors.green.shade600)
+                    ? const Icon(Icons.check_circle, size: 18, color: Colors.green)
                     : active
                         ? const CircularProgressIndicator(strokeWidth: 2)
-                        : Icon(Icons.radio_button_unchecked, size: 16, color: Colors.grey.shade400),
+                        : Icon(Icons.radio_button_unchecked, size: 16, color: theme.colorScheme.onSurface.withValues(alpha: 0.3)),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -276,7 +532,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   label,
                   style: TextStyle(
                     fontSize: 12,
-                    color: active ? const Color(0xFF0F172A) : Colors.grey.shade600,
+                    color: active ? theme.colorScheme.onSurface : theme.colorScheme.onSurface.withValues(alpha: 0.6),
                     fontWeight: active ? FontWeight.w600 : FontWeight.normal,
                   ),
                 ),
@@ -289,16 +545,18 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Widget _buildPrivacyNote() {
+    final theme = Theme.of(context);
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(Icons.shield_outlined, size: 16, color: Colors.grey.shade500),
+        Icon(Icons.shield_outlined, size: 16, color: theme.colorScheme.onSurface.withValues(alpha: 0.4)),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
             'Your password is used only to sign in to s.amizone.net and is never '
-            'stored. Only the Amizone session and your scraped data stay on this device.',
-            style: TextStyle(fontSize: 11, height: 1.4, color: Colors.grey.shade600),
+            'stored. Each account’s session stays on this device, so you can switch '
+            'between them later.',
+            style: TextStyle(fontSize: 11, height: 1.4, color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
           ),
         ),
       ],
@@ -318,7 +576,7 @@ class _LoginScreenState extends State<LoginScreen> {
     if (kIsWeb) {
       setState(() {
         _error = 'Amizone sign-in opens the portal inside the app, which only '
-            'works on Android and iOS. Run CampusTrack on your phone to sign in.';
+            'works on Android and iOS. Run Ami-Track on your phone to sign in.';
       });
       return;
     }
@@ -330,9 +588,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
     final amizone = AmizoneService.instance;
 
-    // Amizone asks for a Cloudflare check on every sign-in, so the portal's own
-    // page (in the WebView) is the only reliable way to authenticate. It is
-    // pre-filled, so the student just taps LOGIN.
+    try {
+      await CookieManager.instance().deleteAllCookies();
+    } catch (error) {
+      debugPrint('Could not clear the portal cookies: $error');
+    }
+    if (!mounted) return;
+
     final cookies = await Navigator.of(context).push<Map<String, String>>(
       MaterialPageRoute(
         builder: (_) => AmizoneWebLoginScreen(username: user, password: pass),
@@ -367,4 +629,16 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _stage = _Stage.idle);
     widget.onSignedIn();
   }
+}
+
+Future<void> openAccountLogin(BuildContext context, {String? username}) {
+  return Navigator.of(context).push<void>(
+    MaterialPageRoute(
+      builder: (_) => LoginScreen(
+        onSignedIn: () => Navigator.of(context).pop(),
+        initialUsername: username,
+        startInAddMode: true,
+      ),
+    ),
+  );
 }

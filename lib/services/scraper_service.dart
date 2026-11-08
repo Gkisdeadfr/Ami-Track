@@ -73,8 +73,14 @@ class ScraperService extends ChangeNotifier {
   static const String amizoneUrl = 'https://s.amizone.net/';
   static const String nexacadUrl = 'https://nexacad.pages.dev/';
   static const String _nexacadResourcesUrl = 'https://nexacad.pages.dev/pages/resources.html';
-  static const String _resourcesKey = 'scraped_resources_v1';
-  static const String _lastSyncKey = 'scraped_resources_synced_at';
+  static const String _legacyResourcesKey = 'scraped_resources_v1';
+  static const String _legacyLastSyncKey = 'scraped_resources_synced_at';
+
+  String _owner = '';
+
+  String get _scope => _owner.trim().toLowerCase().isEmpty ? 'guest' : _owner.trim().toLowerCase();
+  String get _resourcesKey => 'amitrack_resources_v1_$_scope';
+  String get _lastSyncKey => 'amitrack_resources_synced_at_$_scope';
 
   static const String _userAgent =
       'Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 '
@@ -105,8 +111,24 @@ class ScraperService extends ChangeNotifier {
     return codes.toList()..sort();
   }
 
+  /// Loads the library cache that belongs to [username].
+  Future<void> bindAccount(String username) async {
+    _owner = username.trim();
+    await init();
+  }
+
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
+    if (_owner.isNotEmpty) {
+      if (prefs.getString(_resourcesKey) == null && prefs.getString(_legacyResourcesKey) != null) {
+        await prefs.setString(_resourcesKey, prefs.getString(_legacyResourcesKey)!);
+        await prefs.remove(_legacyResourcesKey);
+      }
+      if (prefs.getString(_lastSyncKey) == null && prefs.getString(_legacyLastSyncKey) != null) {
+        await prefs.setString(_lastSyncKey, prefs.getString(_legacyLastSyncKey)!);
+        await prefs.remove(_legacyLastSyncKey);
+      }
+    }
     final lastSync = prefs.getString(_lastSyncKey);
     if (lastSync != null) _lastSyncedAt = DateTime.tryParse(lastSync);
 

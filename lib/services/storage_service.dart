@@ -2,34 +2,60 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/exam.dart';
+import '../models/exam_result.dart';
 import '../models/syllabus.dart';
 import '../models/assignment.dart';
 import '../models/pyq.dart';
 import '../data/initial_data.dart';
+import 'amizone_parser.dart';
 
 class StorageService extends ChangeNotifier {
   static final StorageService instance = StorageService._internal();
   StorageService._internal();
 
-  static const String _kExamsKey = 'clg_exams_v1';
-  static const String _kSyllabusKey = 'clg_syllabus_v1';
-  static const String _kAssignmentsKey = 'clg_assignments_v1';
-  static const String _kPYQsKey = 'clg_pyqs_v1';
+  static const String _legacyExamsKey = 'clg_exams_v1';
+  static const String _legacySyllabusKey = 'clg_syllabus_v1';
+  static const String _legacyAssignmentsKey = 'clg_assignments_v1';
+  static const String _legacyPyqsKey = 'clg_pyqs_v1';
+
+  String _owner = '';
+
+  String get _scope => _owner.trim().toLowerCase().isEmpty ? 'guest' : _owner.trim().toLowerCase();
+  String get _kExamsKey => 'amitrack_exams_v1_$_scope';
+  String get _kSyllabusKey => 'amitrack_syllabus_v1_$_scope';
+  String get _kAssignmentsKey => 'amitrack_assignments_v1_$_scope';
+  String get _kPYQsKey => 'amitrack_pyqs_v1_$_scope';
+  String get _kResultKey => 'amitrack_result_v1_$_scope';
 
   List<ExamItem> _exams = [];
   List<SyllabusSubject> _syllabus = [];
   List<Assignment> _assignments = [];
   List<PYQItem> _pyqs = [];
+  SemesterResult? _latestResult;
   bool _isLoaded = false;
 
   List<ExamItem> get exams => List.unmodifiable(_exams);
   List<SyllabusSubject> get syllabus => List.unmodifiable(_syllabus);
   List<Assignment> get assignments => List.unmodifiable(_assignments);
   List<PYQItem> get pyqs => List.unmodifiable(_pyqs);
+  SemesterResult? get latestResult => _latestResult;
   bool get isLoaded => _isLoaded;
+
+  /// Loads exams, syllabus, assignments, and PYQs for [username].
+  /// Each Amizone account keeps its own local trackers.
+  Future<void> bindAccount(String username) async {
+    _owner = username.trim();
+    await init();
+  }
 
   Future<void> init() async {
     final prefs = await SharedPreferences.getInstance();
+    if (_owner.isNotEmpty) {
+      await _migrateLegacy(prefs, _kExamsKey, _legacyExamsKey);
+      await _migrateLegacy(prefs, _kSyllabusKey, _legacySyllabusKey);
+      await _migrateLegacy(prefs, _kAssignmentsKey, _legacyAssignmentsKey);
+      await _migrateLegacy(prefs, _kPYQsKey, _legacyPyqsKey);
+    }
 
     // Load Exams
     final examsJson = prefs.getString(_kExamsKey);
@@ -87,8 +113,152 @@ class StorageService extends ChangeNotifier {
       _pyqs = InitialData.defaultPYQs;
     }
 
+    // Load Latest Exam Result
+    final resultJson = prefs.getString(_kResultKey);
+    if (resultJson != null) {
+      try {
+        _latestResult = SemesterResult.fromJson(jsonDecode(resultJson) as Map<String, dynamic>);
+      } catch (_) {
+        _latestResult = null;
+      }
+    } else {
+      _latestResult = null;
+    }
+
     _isLoaded = true;
     notifyListeners();
+  }
+
+  Future<void> saveExamResult(SemesterResult result) async {
+    _latestResult = result;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_kResultKey, jsonEncode(result.toJson()));
+    notifyListeners();
+  }
+
+  /// Syncs newly scraped exams from Amizone without overriding custom user exams
+  Future<void> syncScrapedExams(List<ExamItem> scrapedExams) async {
+    if (scrapedExams.isEmpty) return;
+    bool modified = false;
+
+    for (final scraped in scrapedExams) {
+      final existingIndex = _exams.indexWhere(
+        (e) =>
+            e.id == scraped.id ||
+            (e.subjectCode.toUpperCase() == scraped.subjectCode.toUpperCase() &&
+                e.date.year == scraped.date.year &&
+                e.date.month == scraped.date.month &&
+                e.date.day == scraped.date.day),
+      );
+
+      if (existingIndex == -1) {
+        _exams.add(scraped);
+        modified = true;
+      } else {
+        // Update venue or timing if changed
+        final existing = _exams[existingIndex];
+        if (existing.labOrRoom != scraped.labOrRoom || existing.time != scraped.time) {
+          _exams[existingIndex] = existing.copyWith(
+            labOrRoom: scraped.labOrRoom.isNotEmpty ? scraped.labOrRoom : existing.labOrRoom,
+            time: scraped.time.isNotEmpty ? scraped.time : existing.time,
+            mode: scraped.mode.isNotEmpty ? scraped.mode : existing.mode,
+          );
+          modified = true;
+        }
+      }
+    }
+
+    if (modified) {
+      await _saveExams();
+      notifyListeners();
+    }
+  }
+
+  /// Ensures every scraped course from Amizone has a corresponding entry in the Syllabus tracker
+  Future<void> syncScrapedSyllabus(List<AmizoneCourseRecord> courses) async {
+    if (courses.isEmpty) return;
+    bool modified = false;
+
+    for (final course in courses) {
+      if (course.code.trim().isEmpty) continue;
+      final existingIndex = _syllabus.indexWhere(
+        (s) => s.subjectCode.toUpperCase() == course.code.toUpperCase(),
+      );
+
+      if (existingIndex == -1) {
+        // Create syllabus entry with 5 standard modules for the new course
+        final newSubject = SyllabusSubject(
+          id: 'sub-${course.code.toLowerCase()}',
+          subjectCode: course.code,
+          subjectName: course.name.isNotEmpty ? course.name : course.code,
+          colorHex: '#1E3A8A',
+          modules: [
+            SyllabusModule(
+              id: 'mod-1-${course.code.toLowerCase()}',
+              moduleTitle: 'Unit 1: Fundamentals & Concepts',
+              weightage: 20.0,
+              topics: [
+                SyllabusTopic(id: 'top-1-1-${course.code.toLowerCase()}', title: 'Introduction and Basics'),
+                SyllabusTopic(id: 'top-1-2-${course.code.toLowerCase()}', title: 'Core Principles'),
+              ],
+            ),
+            SyllabusModule(
+              id: 'mod-2-${course.code.toLowerCase()}',
+              moduleTitle: 'Unit 2: Theoretical Framework',
+              weightage: 20.0,
+              topics: [
+                SyllabusTopic(id: 'top-2-1-${course.code.toLowerCase()}', title: 'Key Mechanisms & Formulations'),
+                SyllabusTopic(id: 'top-2-2-${course.code.toLowerCase()}', title: 'Analytical Techniques'),
+              ],
+            ),
+            SyllabusModule(
+              id: 'mod-3-${course.code.toLowerCase()}',
+              moduleTitle: 'Unit 3: Applied Architecture',
+              weightage: 20.0,
+              topics: [
+                SyllabusTopic(id: 'top-3-1-${course.code.toLowerCase()}', title: 'Design & Implementation'),
+                SyllabusTopic(id: 'top-3-2-${course.code.toLowerCase()}', title: 'Intermediate Problems'),
+              ],
+            ),
+            SyllabusModule(
+              id: 'mod-4-${course.code.toLowerCase()}',
+              moduleTitle: 'Unit 4: Advanced Principles',
+              weightage: 20.0,
+              topics: [
+                SyllabusTopic(id: 'top-4-1-${course.code.toLowerCase()}', title: 'Advanced Analysis & Models'),
+                SyllabusTopic(id: 'top-4-2-${course.code.toLowerCase()}', title: 'Case Studies'),
+              ],
+            ),
+            SyllabusModule(
+              id: 'mod-5-${course.code.toLowerCase()}',
+              moduleTitle: 'Unit 5: Recent Trends & Applications',
+              weightage: 20.0,
+              topics: [
+                SyllabusTopic(id: 'top-5-1-${course.code.toLowerCase()}', title: 'Contemporary Trends'),
+                SyllabusTopic(id: 'top-5-2-${course.code.toLowerCase()}', title: 'Review & Revision'),
+              ],
+            ),
+          ],
+        );
+        _syllabus.add(newSubject);
+        modified = true;
+      }
+    }
+
+    if (modified) {
+      await _saveSyllabus();
+      notifyListeners();
+    }
+  }
+
+  /// Moves data saved before accounts existed onto the first signed-in student,
+  /// then drops the shared copy so the next account starts clean.
+  Future<void> _migrateLegacy(SharedPreferences prefs, String key, String legacyKey) async {
+    if (prefs.getString(key) != null) return;
+    final legacy = prefs.getString(legacyKey);
+    if (legacy == null) return;
+    await prefs.setString(key, legacy);
+    await prefs.remove(legacyKey);
   }
 
   // --- Exam Actions ---

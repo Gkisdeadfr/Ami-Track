@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:college_tracker/services/amizone_parser.dart';
+import 'package:ami_track/services/amizone_parser.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 String _fixture(String name) => File('test/fixtures/$name').readAsStringSync();
@@ -87,6 +87,97 @@ void main() {
       expect(isAmizoneLoginPage('<form id="loginform"></form>'), isTrue);
       expect(isAmizoneLoginPage(_fixture('amizone_home.html')), isFalse);
       expect(isAmizoneLoginPage(''), isTrue);
+    });
+  });
+
+  group('parseExamSchedulePage', () {
+    test('parses exam schedule table with dates and venues', () {
+      const scheduleHtml = '''
+      <table class="table table-bordered">
+        <thead>
+          <tr>
+            <th>Course Code</th>
+            <th>Course Title</th>
+            <th>Date</th>
+            <th>Time</th>
+            <th>Type</th>
+            <th>Room</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td data-title="Course Code">CSIT124</td>
+            <td data-title="Course Title">Data Structures Using C</td>
+            <td data-title="Date">2026-11-20</td>
+            <td data-title="Time">10:00 AM - 01:00 PM</td>
+            <td data-title="Type">Theory</td>
+            <td data-title="Room">E1-204</td>
+          </tr>
+          <tr>
+            <td data-title="Course Code">CSIT125</td>
+            <td data-title="Course Title">Data Structures Lab</td>
+            <td data-title="Date">2026-11-25</td>
+            <td data-title="Time">02:00 PM - 05:00 PM</td>
+            <td data-title="Type">Practical</td>
+            <td data-title="Room">Lab 3</td>
+          </tr>
+        </tbody>
+      </table>
+      ''';
+
+      final exams = parseExamSchedulePage(scheduleHtml);
+      expect(exams, hasLength(2));
+      expect(exams[0].subjectCode, 'CSIT124');
+      expect(exams[0].title, 'Data Structures Using C');
+      expect(exams[0].labOrRoom, 'E1-204');
+      expect(exams[1].subjectCode, 'CSIT125');
+      expect(exams[1].labOrRoom, 'Lab 3');
+    });
+  });
+
+  group('parseExamResultPage', () {
+    test('parses SGPA, CGPA, credits, and subject grades', () {
+      const resultHtml = '''
+      <div>
+        <h4>Semester 3 Examination Results</h4>
+        <div class="row">
+          <span>SGPA: 8.75</span>
+          <span>CGPA: 8.60</span>
+          <span>Total Credits: 24</span>
+        </div>
+        <table>
+          <thead>
+            <tr><th>Course Code</th><th>Course Title</th><th>Credits</th><th>Grade</th><th>Grade Point</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td data-title="Course Code">CSIT124</td>
+              <td data-title="Course Title">Data Structures</td>
+              <td data-title="Credits">4</td>
+              <td data-title="Grade">A+</td>
+              <td data-title="Grade Point">10</td>
+            </tr>
+            <tr>
+              <td data-title="Course Code">MATH242</td>
+              <td data-title="Course Title">Applied Math IV</td>
+              <td data-title="Credits">4</td>
+              <td data-title="Grade">A</td>
+              <td data-title="Grade Point">9</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      ''';
+
+      final result = parseExamResultPage(resultHtml);
+      expect(result, isNotNull);
+      expect(result!.sgpa, 8.75);
+      expect(result.cgpa, 8.60);
+      expect(result.totalCredits, 24);
+      expect(result.courses, hasLength(2));
+      expect(result.courses[0].courseCode, 'CSIT124');
+      expect(result.courses[0].grade, 'A+');
+      expect(result.courses[0].gradePoint, 10);
     });
   });
 }

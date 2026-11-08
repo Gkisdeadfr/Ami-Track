@@ -2,6 +2,15 @@ import 'package:flutter/material.dart';
 import '../models/attendance_model.dart';
 import '../services/amizone_service.dart';
 
+enum AttendanceSortOrder {
+  dangerFirst,
+  highestFirst,
+  lowestBunksFirst,
+  highestBunksFirst,
+  codeAsc,
+  nameAsc,
+}
+
 class AttendanceScreen extends StatefulWidget {
   const AttendanceScreen({super.key});
 
@@ -11,18 +20,63 @@ class AttendanceScreen extends StatefulWidget {
 
 class _AttendanceScreenState extends State<AttendanceScreen> {
   final Map<String, int> _simulatedExtraBunks = {};
+  AttendanceSortOrder _sortOrder = AttendanceSortOrder.dangerFirst;
+  String _searchQuery = '';
+  final TextEditingController _searchCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  List<CourseAttendance> _sortAndFilterCourses(List<CourseAttendance> courses, double target) {
+    var list = List<CourseAttendance>.from(courses);
+
+    if (_searchQuery.trim().isNotEmpty) {
+      final q = _searchQuery.trim().toLowerCase();
+      list = list.where((c) =>
+          c.subjectCode.toLowerCase().contains(q) ||
+          c.subjectName.toLowerCase().contains(q)).toList();
+    }
+
+    switch (_sortOrder) {
+      case AttendanceSortOrder.dangerFirst:
+        list.sort((a, b) => a.percentage.compareTo(b.percentage));
+        break;
+      case AttendanceSortOrder.highestFirst:
+        list.sort((a, b) => b.percentage.compareTo(a.percentage));
+        break;
+      case AttendanceSortOrder.lowestBunksFirst:
+        list.sort((a, b) => a.safeConsecutiveBunks(target).compareTo(b.safeConsecutiveBunks(target)));
+        break;
+      case AttendanceSortOrder.highestBunksFirst:
+        list.sort((a, b) => b.safeConsecutiveBunks(target).compareTo(a.safeConsecutiveBunks(target)));
+        break;
+      case AttendanceSortOrder.codeAsc:
+        list.sort((a, b) => a.subjectCode.compareTo(b.subjectCode));
+        break;
+      case AttendanceSortOrder.nameAsc:
+        list.sort((a, b) => a.subjectName.compareTo(b.subjectName));
+        break;
+    }
+
+    return list;
+  }
 
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: AmizoneService.instance,
       builder: (context, _) {
+        final theme = Theme.of(context);
         final amizone = AmizoneService.instance;
-        final courses = amizone.courses;
+        final rawCourses = amizone.courses;
+        final courses = _sortAndFilterCourses(rawCourses, amizone.globalTarget);
 
         int totalAttended = 0;
         int totalHeld = 0;
-        for (var c in courses) {
+        for (var c in rawCourses) {
           totalAttended += c.attended;
           totalHeld += c.held;
         }
@@ -46,19 +100,20 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         }
 
         return Scaffold(
-          backgroundColor: const Color(0xFFF8FAFC),
           appBar: AppBar(
-            elevation: 0,
-            backgroundColor: Colors.indigo.shade800,
             title: const Text(
-              'Amizone Attendance & Bunk Planner',
+              'Attendance & Bunk Planner',
               style: TextStyle(
-                fontWeight: FontWeight.bold,
+                fontWeight: FontWeight.w800,
                 fontSize: 18,
-                color: Colors.white,
               ),
             ),
             actions: [
+              IconButton(
+                icon: const Icon(Icons.sort, color: Colors.white),
+                tooltip: 'Sort options',
+                onPressed: () => _showSortModal(context),
+              ),
               IconButton(
                 icon: const Icon(Icons.sync, color: Colors.white),
                 tooltip: 'Sync Attendance',
@@ -75,12 +130,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
               // 2. Overall Attendance & Marks Overview
               _buildOverallSummary(overallPercent, overallMarks, totalAttended, totalHeld, amizone.globalTarget),
-              const SizedBox(height: 14),
-
-              if (courses.isEmpty) ...[
-                _buildEmptyState(),
-                const SizedBox(height: 14),
-              ],
+              const SizedBox(height: 12),
 
               if (amizone.isLoading) ...[
                 const LinearProgressIndicator(),
@@ -90,20 +140,20 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
               if (amizone.statusMessage != null) ...[
                 Container(
                   margin: const EdgeInsets.only(bottom: 12),
-                  padding: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: Colors.indigo.shade50,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(color: Colors.indigo.shade100),
+                    color: theme.colorScheme.primary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: theme.colorScheme.primary.withValues(alpha: 0.2)),
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.info_outline, size: 16, color: Colors.indigo.shade800),
+                      Icon(Icons.info_outline, size: 16, color: theme.colorScheme.primary),
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           amizone.statusMessage!,
-                          style: TextStyle(fontSize: 12, color: Colors.indigo.shade900),
+                          style: TextStyle(fontSize: 12, color: theme.colorScheme.primary),
                         ),
                       ),
                     ],
@@ -111,27 +161,16 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                 ),
               ],
 
-              // 4. Section Title
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Text(
-                    'Subject-Wise Leave & Credit Calculations',
-                    style: TextStyle(
-                      fontSize: 15,
-                      fontWeight: FontWeight.bold,
-                      color: Color(0xFF1E293B),
-                    ),
-                  ),
-                  Text(
-                    '${courses.length} Subjects',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
+              // 3. Search and Sort Filter Bar
+              _buildSearchAndSortBar(context, rawCourses.length),
+              const SizedBox(height: 10),
 
-              // 5. Course Cards
+              if (rawCourses.isEmpty) ...[
+                _buildEmptyState(),
+                const SizedBox(height: 14),
+              ],
+
+              // 4. Course Cards
               ...courses.map((course) => _buildCourseCard(context, course, amizone.globalTarget)),
               const SizedBox(height: 24),
             ],
@@ -141,28 +180,214 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     );
   }
 
+  Widget _buildSearchAndSortBar(BuildContext context, int totalCount) {
+    final theme = Theme.of(context);
+    String sortLabel;
+    switch (_sortOrder) {
+      case AttendanceSortOrder.dangerFirst:
+        sortLabel = 'Danger First';
+        break;
+      case AttendanceSortOrder.highestFirst:
+        sortLabel = 'Highest %';
+        break;
+      case AttendanceSortOrder.lowestBunksFirst:
+        sortLabel = 'Lowest Bunks';
+        break;
+      case AttendanceSortOrder.highestBunksFirst:
+        sortLabel = 'Highest Bunks';
+        break;
+      case AttendanceSortOrder.codeAsc:
+        sortLabel = 'Code (A-Z)';
+        break;
+      case AttendanceSortOrder.nameAsc:
+        sortLabel = 'Name (A-Z)';
+        break;
+    }
+
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 40,
+                child: TextField(
+                  controller: _searchCtrl,
+                  onChanged: (v) => setState(() => _searchQuery = v),
+                  decoration: InputDecoration(
+                    hintText: 'Search subjects or codes...',
+                    hintStyle: const TextStyle(fontSize: 12),
+                    prefixIcon: const Icon(Icons.search, size: 18),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear, size: 16),
+                            onPressed: () {
+                              _searchCtrl.clear();
+                              setState(() => _searchQuery = '');
+                            },
+                          )
+                        : null,
+                    contentPadding: EdgeInsets.zero,
+                    filled: true,
+                    fillColor: theme.cardColor,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: theme.dividerColor),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(10),
+                      borderSide: BorderSide(color: theme.dividerColor),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 8),
+            InkWell(
+              onTap: () => _showSortModal(context),
+              borderRadius: BorderRadius.circular(10),
+              child: Container(
+                height: 40,
+                padding: const EdgeInsets.symmetric(horizontal: 10),
+                decoration: BoxDecoration(
+                  color: theme.cardColor,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: theme.dividerColor),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.sort, size: 16),
+                    const SizedBox(width: 4),
+                    Text(
+                      sortLabel,
+                      style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  void _showSortModal(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Sort Attendance By',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                ListTile(
+                  leading: const Icon(Icons.warning_amber, color: Colors.red),
+                  title: const Text('Critically Low Attendance First (Danger First)'),
+                  trailing: _sortOrder == AttendanceSortOrder.dangerFirst
+                      ? const Icon(Icons.check, color: Colors.blue)
+                      : null,
+                  onTap: () {
+                    setState(() => _sortOrder = AttendanceSortOrder.dangerFirst);
+                    Navigator.pop(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.trending_up, color: Colors.green),
+                  title: const Text('Highest Attendance First'),
+                  trailing: _sortOrder == AttendanceSortOrder.highestFirst
+                      ? const Icon(Icons.check, color: Colors.blue)
+                      : null,
+                  onTap: () {
+                    setState(() => _sortOrder = AttendanceSortOrder.highestFirst);
+                    Navigator.pop(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.hourglass_bottom, color: Colors.orange),
+                  title: const Text('Lowest Safe Bunks First'),
+                  trailing: _sortOrder == AttendanceSortOrder.lowestBunksFirst
+                      ? const Icon(Icons.check, color: Colors.blue)
+                      : null,
+                  onTap: () {
+                    setState(() => _sortOrder = AttendanceSortOrder.lowestBunksFirst);
+                    Navigator.pop(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.beach_access, color: Colors.teal),
+                  title: const Text('Most Safe Bunks First'),
+                  trailing: _sortOrder == AttendanceSortOrder.highestBunksFirst
+                      ? const Icon(Icons.check, color: Colors.blue)
+                      : null,
+                  onTap: () {
+                    setState(() => _sortOrder = AttendanceSortOrder.highestBunksFirst);
+                    Navigator.pop(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.sort_by_alpha),
+                  title: const Text('Subject Code (A-Z)'),
+                  trailing: _sortOrder == AttendanceSortOrder.codeAsc
+                      ? const Icon(Icons.check, color: Colors.blue)
+                      : null,
+                  onTap: () {
+                    setState(() => _sortOrder = AttendanceSortOrder.codeAsc);
+                    Navigator.pop(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.text_fields),
+                  title: const Text('Subject Name (A-Z)'),
+                  trailing: _sortOrder == AttendanceSortOrder.nameAsc
+                      ? const Icon(Icons.check, color: Colors.blue)
+                      : null,
+                  onTap: () {
+                    setState(() => _sortOrder = AttendanceSortOrder.nameAsc);
+                    Navigator.pop(context);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildEmptyState() {
+    final theme = Theme.of(context);
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(22),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: theme.cardColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.indigo.shade100),
+        border: Border.all(color: theme.dividerColor),
       ),
       child: Column(
         children: [
-          Icon(Icons.cloud_download_outlined, size: 34, color: Colors.indigo.shade300),
-          const SizedBox(height: 8),
+          Icon(Icons.cloud_download_outlined, size: 40, color: theme.colorScheme.primary),
+          const SizedBox(height: 10),
           const Text(
-            'No attendance scraped yet',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+            'No attendance records found',
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
           ),
           const SizedBox(height: 4),
           Text(
-            'Tap the sync icon to scrape your courses from s.amizone.net.',
+            'Tap the sync icon above to scrape your courses & attendance from s.amizone.net.',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+            style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.6)),
           ),
         ],
       ),
@@ -170,21 +395,22 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   }
 
   Widget _buildTargetSelector(BuildContext context, AmizoneService amizone) {
+    final theme = Theme.of(context);
     final targets = [
-      {'val': 75.0, 'label': '75% (Min Eligibility)'},
-      {'val': 80.0, 'label': '80% (1 Mark)'},
-      {'val': 85.0, 'label': '85% (2 Marks)'},
-      {'val': 90.0, 'label': '90% (3 Marks)'},
-      {'val': 95.0, 'label': '95% (4 Marks)'},
-      {'val': 95.01, 'label': '95.01%+ (5/5 Full)'},
+      {'val': 75.0, 'label': '75% (Min)'},
+      {'val': 80.0, 'label': '80% (1 Mk)'},
+      {'val': 85.0, 'label': '85% (2 Mks)'},
+      {'val': 90.0, 'label': '90% (3 Mks)'},
+      {'val': 95.0, 'label': '95% (4 Mks)'},
+      {'val': 95.01, 'label': '95.01%+ (Full 5/5)'},
     ];
 
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: theme.cardColor,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: theme.dividerColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -192,20 +418,27 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text(
+              Text(
                 'Target Attendance to Maintain:',
                 style: TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: 13,
-                  color: Color(0xFF1E293B),
+                  color: theme.colorScheme.onSurface,
                 ),
               ),
-              Text(
-                '${amizone.globalTarget.toStringAsFixed(1)}%',
-                style: TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 14,
-                  color: Colors.indigo.shade800,
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${amizone.globalTarget.toStringAsFixed(1)}%',
+                  style: TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 13,
+                    color: theme.colorScheme.primary,
+                  ),
                 ),
               ),
             ],
@@ -226,12 +459,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.bold,
-                        color: isSelected ? Colors.white : Colors.grey.shade800,
+                        color: isSelected ? Colors.white : theme.colorScheme.onSurface,
                       ),
                     ),
                     selected: isSelected,
-                    selectedColor: Colors.indigo.shade800,
-                    backgroundColor: Colors.grey.shade100,
+                    selectedColor: theme.colorScheme.primary,
+                    backgroundColor: theme.cardColor,
                     onSelected: (selected) {
                       if (selected) {
                         amizone.setGlobalTarget(val);
@@ -257,15 +490,15 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Colors.indigo.shade900, Colors.indigo.shade800],
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1E3A8A), Color(0xFF1E40AF), Color(0xFF2563EB)],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
         borderRadius: BorderRadius.circular(18),
         boxShadow: [
           BoxShadow(
-            color: Colors.indigo.shade900.withOpacity(0.2),
+            color: const Color(0xFF1E3A8A).withValues(alpha: 0.25),
             blurRadius: 10,
             offset: const Offset(0, 4),
           ),
@@ -299,7 +532,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.15),
+              color: Colors.white.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(14),
             ),
             child: Column(
@@ -334,32 +567,32 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
     CourseAttendance course,
     double target,
   ) {
+    final theme = Theme.of(context);
     final int extraBunks = _simulatedExtraBunks[course.id] ?? 0;
-    // Denominator increases from held to held + extraBunks, attended stays attended
     final double simulatedPercent = course.simulateWithExtraLeaves(extraBunks);
     final int safeConsecutive = course.safeConsecutiveBunks(target);
     final int neededToRecover = course.classesNeededToReach(target);
 
     Color badgeColor;
     if (course.percentage > 95.00) {
-      badgeColor = Colors.green.shade700;
+      badgeColor = Colors.green;
     } else if (course.percentage > 85.00) {
-      badgeColor = Colors.blue.shade700;
+      badgeColor = Colors.blue;
     } else if (course.percentage > 75.00) {
-      badgeColor = Colors.orange.shade800;
+      badgeColor = Colors.orange;
     } else {
-      badgeColor = Colors.red.shade700;
+      badgeColor = Colors.red;
     }
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: theme.cardColor,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade200),
+        border: Border.all(color: theme.dividerColor),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.02),
+            color: Colors.black.withValues(alpha: 0.02),
             blurRadius: 6,
             offset: const Offset(0, 2),
           ),
@@ -370,29 +603,51 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Code & Current Ratio
+            // Code & Current Ratio & Internal Marks
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: Colors.indigo.shade50,
-                    borderRadius: BorderRadius.circular(6),
-                  ),
-                  child: Text(
-                    course.subjectCode,
-                    style: TextStyle(
-                      fontSize: 11,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.indigo.shade800,
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: theme.colorScheme.primary.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Text(
+                        course.subjectCode,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.bold,
+                          color: theme.colorScheme.primary,
+                        ),
+                      ),
                     ),
-                  ),
+                    if (course.internalMarks > 0) ...[
+                      const SizedBox(width: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.amber.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          'Internal: ${course.internalMarks.toStringAsFixed(1)}/${course.maxInternal.toInt()}',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.amber.shade800,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
                   decoration: BoxDecoration(
-                    color: badgeColor.withOpacity(0.12),
+                    color: badgeColor.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
@@ -409,35 +664,35 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             const SizedBox(height: 8),
             Text(
               course.subjectName,
-              style: const TextStyle(
+              style: TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.bold,
-                color: Color(0xFF1E293B),
+                color: theme.colorScheme.onSurface,
               ),
             ),
             const SizedBox(height: 6),
 
-            // Credit rule & Denominator explanation
+            // Credit rule explanation
             Container(
               padding: const EdgeInsets.all(8),
               decoration: BoxDecoration(
-                color: Colors.grey.shade50,
+                color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.4),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.grey.shade200),
+                border: Border.all(color: theme.dividerColor),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      Icon(Icons.calculate, size: 14, color: Colors.indigo.shade700),
+                      Icon(Icons.calculate, size: 14, color: theme.colorScheme.primary),
                       const SizedBox(width: 4),
                       Text(
-                        'Credits: ${course.credits}  •  Minimum Scheduled: ${course.minCreditLectures} lectures (${course.credits}×15)',
-                        style: const TextStyle(
+                        'Credits: ${course.credits} • Min Lectures: ${course.minCreditLectures} (${course.credits}×15)',
+                        style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
-                          color: Color(0xFF1E293B),
+                          color: theme.colorScheme.onSurface,
                         ),
                       ),
                     ],
@@ -445,49 +700,49 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                   const SizedBox(height: 2),
                   Text(
                     course.held >= course.minCreditLectures
-                        ? '• ${course.held} classes marked by teacher till date (exceeded ${course.minCreditLectures} min). Total only increases as new classes are marked.'
-                        : '• ${course.held} classes marked so far. At least ${course.minCreditLectures - course.held} more classes scheduled to complete credit requirement.',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                        ? '• ${course.held} classes marked by teacher till date (credit threshold reached).'
+                        : '• ${course.held} classes marked so far. At least ${course.minCreditLectures - course.held} more classes scheduled.',
+                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withValues(alpha: 0.65)),
                   ),
                   Text(
-                    '• Leaves already taken: ${course.leavesTaken} class${course.leavesTaken == 1 ? "" : "es"} missed.',
-                    style: TextStyle(fontSize: 11, color: Colors.grey.shade700),
+                    '• Missed classes: ${course.leavesTaken} class${course.leavesTaken == 1 ? "" : "es"}.',
+                    style: TextStyle(fontSize: 11, color: theme.colorScheme.onSurface.withValues(alpha: 0.65)),
                   ),
                 ],
               ),
             ),
             const SizedBox(height: 8),
 
-            // Safe Bunks logic (Explaining that denominator increases)
+            // Safe Bunks logic
             if (safeConsecutive > 0) ...[
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                 decoration: BoxDecoration(
-                  color: Colors.green.shade50,
+                  color: Colors.green.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.green.shade200),
+                  border: Border.all(color: Colors.green.withValues(alpha: 0.3)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Row(
                       children: [
-                        Icon(Icons.check_circle, size: 16, color: Colors.green.shade700),
+                        const Icon(Icons.check_circle, size: 16, color: Colors.green),
                         const SizedBox(width: 6),
                         Text(
                           'You can safely bunk $safeConsecutive upcoming class${safeConsecutive > 1 ? "es" : ""}',
-                          style: TextStyle(
+                          style: const TextStyle(
                             fontSize: 12,
                             fontWeight: FontWeight.bold,
-                            color: Colors.green.shade900,
+                            color: Colors.green,
                           ),
                         ),
                       ],
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      'If you miss $safeConsecutive classes, denominator increases from ${course.held} to ${course.held + safeConsecutive}, resulting in ${course.attended}/${course.held + safeConsecutive} (${course.simulateWithExtraLeaves(safeConsecutive).toStringAsFixed(2)}% >= ${target.toStringAsFixed(1)}%).',
-                      style: TextStyle(fontSize: 11, color: Colors.green.shade800),
+                      'If you miss $safeConsecutive classes, ratio becomes ${course.attended}/${course.held + safeConsecutive} (${course.simulateWithExtraLeaves(safeConsecutive).toStringAsFixed(2)}% >= ${target.toStringAsFixed(1)}%).',
+                      style: TextStyle(fontSize: 11, color: Colors.green.shade700),
                     ),
                   ],
                 ),
@@ -496,16 +751,16 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                 decoration: BoxDecoration(
-                  color: Colors.red.shade50,
+                  color: Colors.red.withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.red.shade200),
+                  border: Border.all(color: Colors.red.withValues(alpha: 0.3)),
                 ),
                 child: Text(
                   '⚠️ Below target! You must attend the next $neededToRecover classes consecutively to recover above ${target.toStringAsFixed(1)}%.',
-                  style: TextStyle(
+                  style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
-                    color: Colors.red.shade900,
+                    color: Colors.red,
                   ),
                 ),
               ),
@@ -513,11 +768,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
                 decoration: BoxDecoration(
-                  color: Colors.amber.shade50,
+                  color: Colors.amber.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.amber.withValues(alpha: 0.3)),
                 ),
                 child: Text(
-                  'On edge: Bunking 1 more class (denominator becomes ${course.held + 1}) will drop you below ${target.toStringAsFixed(1)}%!',
+                  'On edge: Bunking 1 more class will drop you below ${target.toStringAsFixed(1)}%!',
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.bold,
@@ -529,7 +785,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
             const SizedBox(height: 10),
 
-            // Live Simulator Slider/Counter: Shows Denominator Increasing!
+            // Live Simulator Slider/Counter
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
@@ -576,7 +832,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.bold,
-                    color: simulatedPercent < target ? Colors.red : Colors.green.shade800,
+                    color: simulatedPercent < target ? Colors.red : Colors.green,
                   ),
                 ),
               ],

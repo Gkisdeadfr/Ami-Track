@@ -53,7 +53,7 @@ class _AmizoneWebLoginScreenState extends State<AmizoneWebLoginScreen> {
             child: Text(
               _error ??
                   'Enter your Amizone credentials, complete the verification, '
-                      'then tap Login. CampusTrack continues automatically.',
+                      'then tap Login. Ami-Track continues automatically.',
               style: TextStyle(fontSize: 12, color: Colors.indigo.shade900),
             ),
           ),
@@ -111,8 +111,8 @@ class _AmizoneWebLoginScreenState extends State<AmizoneWebLoginScreen> {
           // The portal's own submit handler throws on getElementById('loginForm')
           // (the form id is lowercase), so submit the real form ourselves once
           // Cloudflare has issued its token.
-          if (!window.__campusTrackSubmit) {
-            window.__campusTrackSubmit = true;
+          if (!window.__amiTrackSubmit) {
+            window.__amiTrackSubmit = true;
             document.addEventListener('click', function (event) {
               var button = event.target && event.target.closest
                   ? event.target.closest('button[type="submit"]')

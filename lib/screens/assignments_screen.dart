@@ -3,6 +3,13 @@ import 'package:intl/intl.dart';
 import '../models/assignment.dart';
 import '../services/storage_service.dart';
 
+enum AssignmentSortOption {
+  urgentFirst,
+  latestFirst,
+  subjectAsc,
+  titleAsc,
+}
+
 class AssignmentsScreen extends StatefulWidget {
   const AssignmentsScreen({super.key});
 
@@ -13,6 +20,7 @@ class AssignmentsScreen extends StatefulWidget {
 class _AssignmentsScreenState extends State<AssignmentsScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  AssignmentSortOption _sortOption = AssignmentSortOption.urgentFirst;
 
   @override
   void initState() {
@@ -26,12 +34,31 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
     super.dispose();
   }
 
+  List<Assignment> _sort(List<Assignment> list) {
+    final sorted = List<Assignment>.from(list);
+    switch (_sortOption) {
+      case AssignmentSortOption.urgentFirst:
+        sorted.sort((a, b) => a.submissionDate.compareTo(b.submissionDate));
+        break;
+      case AssignmentSortOption.latestFirst:
+        sorted.sort((a, b) => b.submissionDate.compareTo(a.submissionDate));
+        break;
+      case AssignmentSortOption.subjectAsc:
+        sorted.sort((a, b) => a.subject.compareTo(b.subject));
+        break;
+      case AssignmentSortOption.titleAsc:
+        sorted.sort((a, b) => a.title.compareTo(b.title));
+        break;
+    }
+    return sorted;
+  }
+
   @override
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: StorageService.instance,
       builder: (context, _) {
-        final assignments = StorageService.instance.assignments;
+        final assignments = _sort(StorageService.instance.assignments);
         final todoList =
             assignments.where((a) => a.status == AssignmentStatus.todo).toList();
         final ongoingList =
@@ -44,18 +71,21 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
             .toList();
 
         return Scaffold(
-          backgroundColor: const Color(0xFFF8FAFC),
           appBar: AppBar(
-            elevation: 0,
-            backgroundColor: Colors.indigo.shade800,
             title: const Text(
               'Assignments Tracker',
               style: TextStyle(
-                fontWeight: FontWeight.bold,
-                fontSize: 19,
-                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 18,
               ),
             ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.sort, color: Colors.white),
+                tooltip: 'Sort assignments',
+                onPressed: () => _showSortModal(context),
+              ),
+            ],
             bottom: TabBar(
               controller: _tabController,
               isScrollable: true,
@@ -85,10 +115,10 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
           ),
           floatingActionButton: FloatingActionButton.extended(
             onPressed: () => _showAddAssignmentDialog(context),
-            backgroundColor: Colors.indigo.shade800,
+            backgroundColor: const Color(0xFF1E3A8A),
             icon: const Icon(Icons.add_task, color: Colors.white),
             label: const Text(
-              'New Assignment',
+              'New Task',
               style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
             ),
           ),
@@ -97,17 +127,89 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
     );
   }
 
+  void _showSortModal(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Sort Assignments By',
+                  style: TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                ListTile(
+                  leading: const Icon(Icons.access_alarm, color: Colors.red),
+                  title: const Text('Due Date (Urgent / Nearest First)'),
+                  trailing: _sortOption == AssignmentSortOption.urgentFirst
+                      ? const Icon(Icons.check, color: Colors.blue)
+                      : null,
+                  onTap: () {
+                    setState(() => _sortOption = AssignmentSortOption.urgentFirst);
+                    Navigator.pop(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.calendar_month, color: Colors.blue),
+                  title: const Text('Due Date (Furthest First)'),
+                  trailing: _sortOption == AssignmentSortOption.latestFirst
+                      ? const Icon(Icons.check, color: Colors.blue)
+                      : null,
+                  onTap: () {
+                    setState(() => _sortOption = AssignmentSortOption.latestFirst);
+                    Navigator.pop(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.school, color: Colors.purple),
+                  title: const Text('Subject (A-Z)'),
+                  trailing: _sortOption == AssignmentSortOption.subjectAsc
+                      ? const Icon(Icons.check, color: Colors.blue)
+                      : null,
+                  onTap: () {
+                    setState(() => _sortOption = AssignmentSortOption.subjectAsc);
+                    Navigator.pop(context);
+                  },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.title, color: Colors.teal),
+                  title: const Text('Title (A-Z)'),
+                  trailing: _sortOption == AssignmentSortOption.titleAsc
+                      ? const Icon(Icons.check, color: Colors.blue)
+                      : null,
+                  onTap: () {
+                    setState(() => _sortOption = AssignmentSortOption.titleAsc);
+                    Navigator.pop(context);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildList(List<Assignment> items) {
+    final theme = Theme.of(context);
     if (items.isEmpty) {
       return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.assignment_turned_in, size: 60, color: Colors.grey.shade400),
+            Icon(Icons.assignment_turned_in_outlined, size: 56, color: theme.colorScheme.onSurface.withValues(alpha: 0.3)),
             const SizedBox(height: 12),
             Text(
               'No assignments here!',
-              style: TextStyle(color: Colors.grey.shade600, fontSize: 16),
+              style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.6), fontSize: 16),
             ),
           ],
         ),
@@ -132,28 +234,28 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
         Color badgeColor;
         switch (item.status) {
           case AssignmentStatus.todo:
-            badgeColor = Colors.orange.shade700;
+            badgeColor = Colors.orange;
             break;
           case AssignmentStatus.ongoing:
-            badgeColor = Colors.blue.shade700;
+            badgeColor = Colors.blue;
             break;
           case AssignmentStatus.completed:
-            badgeColor = Colors.indigo.shade700;
+            badgeColor = Colors.indigoAccent;
             break;
           case AssignmentStatus.submitted:
-            badgeColor = Colors.green.shade700;
+            badgeColor = Colors.green;
             break;
         }
 
         return Container(
           margin: const EdgeInsets.only(bottom: 12),
           decoration: BoxDecoration(
-            color: Colors.white,
+            color: theme.cardColor,
             borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: Colors.grey.shade200),
+            border: Border.all(color: theme.dividerColor),
             boxShadow: [
               BoxShadow(
-                color: Colors.black.withOpacity(0.03),
+                color: Colors.black.withValues(alpha: 0.03),
                 blurRadius: 8,
                 offset: const Offset(0, 3),
               ),
@@ -168,12 +270,9 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                       decoration: BoxDecoration(
-                        color: Colors.indigo.shade50,
+                        color: theme.colorScheme.primary.withValues(alpha: 0.12),
                         borderRadius: BorderRadius.circular(6),
                       ),
                       child: Text(
@@ -181,7 +280,7 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.bold,
-                          color: Colors.indigo.shade800,
+                          color: theme.colorScheme.primary,
                         ),
                       ),
                     ),
@@ -200,12 +299,9 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
                         );
                       }).toList(),
                       child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 10,
-                          vertical: 4,
-                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                         decoration: BoxDecoration(
-                          color: badgeColor.withOpacity(0.12),
+                          color: badgeColor.withValues(alpha: 0.12),
                           borderRadius: BorderRadius.circular(12),
                         ),
                         child: Row(
@@ -220,8 +316,7 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
                               ),
                             ),
                             const SizedBox(width: 4),
-                            Icon(Icons.arrow_drop_down,
-                                size: 16, color: badgeColor),
+                            Icon(Icons.arrow_drop_down, size: 16, color: badgeColor),
                           ],
                         ),
                       ),
@@ -231,17 +326,17 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
                 const SizedBox(height: 10),
                 Text(
                   item.title,
-                  style: const TextStyle(
-                    fontSize: 16,
+                  style: TextStyle(
+                    fontSize: 15,
                     fontWeight: FontWeight.bold,
-                    color: Color(0xFF1E293B),
+                    color: theme.colorScheme.onSurface,
                   ),
                 ),
                 if (item.notes.isNotEmpty) ...[
                   const SizedBox(height: 6),
                   Text(
                     item.notes,
-                    style: TextStyle(fontSize: 13, color: Colors.grey.shade600),
+                    style: TextStyle(fontSize: 12, color: theme.colorScheme.onSurface.withValues(alpha: 0.65)),
                   ),
                 ],
                 const SizedBox(height: 12),
@@ -255,7 +350,7 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
                           size: 15,
                           color: diff < 0 && item.status != AssignmentStatus.submitted
                               ? Colors.red
-                              : Colors.grey.shade600,
+                              : theme.colorScheme.onSurface.withValues(alpha: 0.5),
                         ),
                         const SizedBox(width: 6),
                         Text(
@@ -264,8 +359,8 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
                             fontSize: 12,
                             fontWeight: FontWeight.w600,
                             color: diff < 0 && item.status != AssignmentStatus.submitted
-                                ? Colors.red.shade700
-                                : Colors.grey.shade700,
+                                ? Colors.red
+                                : theme.colorScheme.onSurface.withValues(alpha: 0.7),
                           ),
                         ),
                         if (item.status != AssignmentStatus.submitted) ...[
@@ -275,10 +370,10 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
                                 ? '(Overdue)'
                                 : diff == 0
                                     ? '(Today!)'
-                                    : '($diff days left)',
+                                    : '($diff d left)',
                             style: TextStyle(
                               fontSize: 11,
-                              color: diff <= 1 ? Colors.red.shade700 : Colors.blue.shade700,
+                              color: diff <= 1 ? Colors.red : Colors.blue,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
@@ -286,7 +381,7 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
                       ],
                     ),
                     IconButton(
-                      icon: const Icon(Icons.delete_outline, size: 18, color: Colors.grey),
+                      icon: Icon(Icons.delete_outline, size: 18, color: theme.colorScheme.onSurface.withValues(alpha: 0.4)),
                       onPressed: () => StorageService.instance.deleteAssignment(item.id),
                     ),
                   ],
@@ -312,7 +407,7 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
         return StatefulBuilder(
           builder: (context, setDialogState) {
             return AlertDialog(
-              title: const Text('Add Assignment'),
+              title: const Text('Add Assignment', style: TextStyle(fontWeight: FontWeight.bold)),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -358,7 +453,7 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
                         const SizedBox(width: 8),
                         Expanded(
                           child: DropdownButtonFormField<AssignmentStatus>(
-                            value: selectedStatus,
+                            initialValue: selectedStatus,
                             decoration: const InputDecoration(labelText: 'Status'),
                             items: AssignmentStatus.values.map((s) {
                               return DropdownMenuItem(
@@ -393,7 +488,7 @@ class _AssignmentsScreenState extends State<AssignmentsScreen>
                 ),
                 ElevatedButton(
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.indigo.shade800,
+                    backgroundColor: const Color(0xFF1E3A8A),
                   ),
                   onPressed: () {
                     if (titleCtrl.text.trim().isEmpty) return;

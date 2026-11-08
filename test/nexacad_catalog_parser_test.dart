@@ -1,4 +1,4 @@
-import 'package:college_tracker/services/nexacad_catalog_parser.dart';
+import 'package:ami_track/services/nexacad_catalog_parser.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _script = r'''
