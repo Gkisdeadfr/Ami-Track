@@ -1,6 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
-
 import '../app_state.dart';
 import 'amizone_login_screen.dart';
 import 'sections.dart';
@@ -44,9 +42,10 @@ class _HomeShellState extends State<HomeShell> {
     await Navigator.of(context).push<bool>(
       MaterialPageRoute(
         builder: (_) => AmizoneLoginScreen(
-          onAuthenticated: (cookies) => AppState.instance.completeLogin(
+          onAuthenticated: (cookies, userAgent) => AppState.instance.completeLogin(
             username: username,
             cookies: cookies,
+            userAgent: userAgent,
           ),
         ),
       ),
@@ -65,6 +64,7 @@ class _HomeShellState extends State<HomeShell> {
         final pages = [
           DashboardSection(onOpenAttendance: () => setState(() => _tab = 1)),
           const AttendanceSection(),
+          const AcademicSection(),
           const LibrarySection(),
           const ProfileSection(),
         ];
@@ -99,6 +99,7 @@ class _HomeShellState extends State<HomeShell> {
             destinations: const [
               NavigationDestination(icon: Icon(Icons.grid_view_rounded), label: 'Overview'),
               NavigationDestination(icon: Icon(Icons.fact_check_outlined), label: 'Attendance'),
+              NavigationDestination(icon: Icon(Icons.school_outlined), label: 'Academics'),
               NavigationDestination(icon: Icon(Icons.folder_open_rounded), label: 'Library'),
               NavigationDestination(icon: Icon(Icons.person_outline_rounded), label: 'Profile'),
             ],
