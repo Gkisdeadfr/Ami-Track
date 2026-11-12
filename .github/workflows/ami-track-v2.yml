@@ -1,0 +1,52 @@
+name: Ami-Track v2 checks
+
+on:
+  push:
+    branches:
+      - rebuild/v2
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: FastAPI tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rebuild/backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: rebuild/backend/requirements.txt
+      - run: pip install -r requirements.txt
+      - run: pytest -q
+
+  mobile:
+    name: Flutter analyze and tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: "3.41.2"
+          cache: true
+      - name: Generate platform runners
+        working-directory: rebuild/mobile
+        run: flutter create --platforms=android,ios .
+      - name: Resolve Flutter packages
+        working-directory: rebuild/mobile
+        run: flutter pub get
+      - name: Analyze
+        working-directory: rebuild/mobile
+        run: flutter analyze --no-fatal-infos
+      - name: Test
+        working-directory: rebuild/mobile
+        run: flutter test
