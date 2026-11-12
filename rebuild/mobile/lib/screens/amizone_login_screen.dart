@@ -3,7 +3,7 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
 class AmizoneLoginScreen extends StatefulWidget {
   const AmizoneLoginScreen({super.key, required this.onAuthenticated});
-  final Future<void> Function(Map<String, String> cookies) onAuthenticated;
+  final Future<void> Function(Map<String, String> cookies, String userAgent) onAuthenticated;
 
   @override
   State<AmizoneLoginScreen> createState() => _AmizoneLoginScreenState();
@@ -14,8 +14,7 @@ class _AmizoneLoginScreenState extends State<AmizoneLoginScreen> {
   String? _message;
 
   Future<void> _onLoadStop(InAppWebViewController controller, WebUri? url) async {
-    // Install the compatibility handler while the login form is on screen.
-    // It only submits after Turnstile has produced a real response token.
+    // Fix the portal's form-id casing bug only after Turnstile has returned a token.
     await controller.evaluateJavascript(source: """
       (function () {
         var form = document.getElementById('loginform');
@@ -55,10 +54,9 @@ class _AmizoneLoginScreenState extends State<AmizoneLoginScreen> {
         for (final cookie in cookies)
           if (cookie.name.isNotEmpty) cookie.name: cookie.value,
       };
-      if (session.isEmpty) {
-        throw Exception('Amizone did not return a session cookie.');
-      }
-      await widget.onAuthenticated(session);
+      if (session.isEmpty) throw Exception('Amizone did not return a session cookie.');
+      final userAgent = await controller.evaluateJavascript(source: 'navigator.userAgent');
+      await widget.onAuthenticated(session, userAgent?.toString() ?? '');
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       _handingOff = false;
