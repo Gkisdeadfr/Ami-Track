@@ -42,4 +42,6 @@ class AmizoneClient:
         return response.text
 
     async def close(self):
+        # Preserve any cookies rotated by Amizone during this request batch.
+        self.session.cookies = dict(self.client.cookies)
         await self.client.aclose()
