@@ -24,10 +24,10 @@ class AppState extends ChangeNotifier {
   String? error;
   DateTime? lastSyncedAt;
 
-  List<Map<String, dynamic>> get attendance =>
-      _maps(data['attendance']);
-  List<Map<String, dynamic>> get courses =>
-      _maps(data['courses']);
+  List<Map<String, dynamic>> get attendance => _maps(data['attendance']);
+  List<Map<String, dynamic>> get courses => _maps(data['courses']);
+  List<Map<String, dynamic>> get exams => _maps(data['exams']);
+  List<Map<String, dynamic>> get results => _maps(data['results']);
   Map<String, dynamic> get profile =>
       data['profile'] is Map ? Map<String, dynamic>.from(data['profile']) : {};
 
@@ -60,12 +60,17 @@ class AppState extends ChangeNotifier {
   Future<void> completeLogin({
     required String username,
     required Map<String, String> cookies,
+    String? userAgent,
   }) async {
     loading = true;
     error = null;
     notifyListeners();
     try {
-      final token = await api.registerSession(username: username, cookies: cookies);
+      final token = await api.registerSession(
+        username: username,
+        cookies: cookies,
+        userAgent: userAgent,
+      );
       api.setToken(token);
       this.username = username;
       final prefs = await SharedPreferences.getInstance();
