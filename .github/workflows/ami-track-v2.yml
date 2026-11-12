@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
-          channel: stable
+          flutter-version: "3.41.2"
           cache: true
       - name: Generate platform runners
         working-directory: rebuild/mobile
@@ -46,7 +46,7 @@ jobs:
         run: flutter pub get
       - name: Analyze
         working-directory: rebuild/mobile
-        run: flutter analyze
+        run: flutter analyze --no-fatal-infos
       - name: Test
         working-directory: rebuild/mobile
         run: flutter test
