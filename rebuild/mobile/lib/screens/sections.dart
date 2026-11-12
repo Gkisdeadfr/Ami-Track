@@ -295,3 +295,250 @@ class _InfoCard extends StatelessWidget {
     ]),
   );
 }
+
+
+class AcademicSection extends StatelessWidget {
+  const AcademicSection({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return DefaultTabController(
+      length: 3,
+      child: Column(
+        children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(18, 16, 18, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text('Academics', style: TextStyle(fontSize: 25, fontWeight: FontWeight.w800)),
+                ),
+              ],
+            ),
+          ),
+          const TabBar(
+            tabs: [
+              Tab(text: 'Exams'),
+              Tab(text: 'Results'),
+              Tab(text: 'Internals'),
+            ],
+          ),
+          const Expanded(
+            child: TabBarView(
+              children: [
+                _ExamsTab(),
+                _ResultsTab(),
+                _InternalsTab(),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ExamsTab extends StatelessWidget {
+  const _ExamsTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final exams = AppState.instance.exams;
+    if (exams.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(18),
+        child: _EmptyState(
+          title: 'No exam schedule found',
+          subtitle: 'The schedule will appear here when Amizone publishes it.',
+        ),
+      );
+    }
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: exams.length,
+      itemBuilder: (context, index) {
+        final exam = exams[index];
+        final date = DateTime.tryParse(exam['date']?.toString() ?? '');
+        final type = exam['type']?.toString() ?? 'theory';
+        return Card(
+          margin: const EdgeInsets.only(bottom: 9),
+          child: ListTile(
+            leading: Container(
+              width: 45,
+              height: 48,
+              decoration: BoxDecoration(
+                color: const Color(0xFF263353),
+                borderRadius: BorderRadius.circular(11),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(date == null ? '--' : DateFormat('dd').format(date),
+                      style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+                  Text(date == null ? '---' : DateFormat('MMM').format(date).toUpperCase(),
+                      style: const TextStyle(fontSize: 9, color: Colors.white60)),
+                ],
+              ),
+            ),
+            title: Text(exam['title']?.toString() ?? 'Exam',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+            subtitle: Text(
+              [
+                exam['subject_code'],
+                exam['time'],
+                type.toUpperCase(),
+                exam['room'],
+              ].where((v) => v != null && v.toString().trim().isNotEmpty).join(' • '),
+              style: const TextStyle(fontSize: 10, color: Colors.white54),
+            ),
+            isThreeLine: true,
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _ResultsTab extends StatelessWidget {
+  const _ResultsTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final results = AppState.instance.results;
+    if (results.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(18),
+        child: _EmptyState(
+          title: 'No results published',
+          subtitle: 'Published semester grades and CGPA will show up here.',
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: results.map((result) {
+        final courses = result['courses'] is List
+            ? (result['courses'] as List).whereType<Map>().toList()
+            : <Map>[];
+        return Card(
+          margin: const EdgeInsets.only(bottom: 12),
+          child: Padding(
+            padding: const EdgeInsets.all(15),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(result['semester_name']?.toString() ?? 'Semester',
+                    style: const TextStyle(fontWeight: FontWeight.w800, fontSize: 15)),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    _Metric(label: 'SGPA', value: (result['sgpa'] ?? 0).toString()),
+                    const SizedBox(width: 10),
+                    _Metric(label: 'CGPA', value: (result['cgpa'] ?? 0).toString()),
+                    const SizedBox(width: 10),
+                    _Metric(label: 'Credits', value: (result['total_credits'] ?? 0).toString()),
+                  ],
+                ),
+                if (courses.isNotEmpty) ...[
+                  const SizedBox(height: 14),
+                  const Divider(),
+                  ...courses.map((course) => Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(course['course_name']?.toString() ?? '',
+                                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+                              Text(course['course_code']?.toString() ?? '',
+                                  style: const TextStyle(fontSize: 10, color: Colors.white38)),
+                            ],
+                          ),
+                        ),
+                        Text(course['grade']?.toString() ?? '-',
+                            style: const TextStyle(fontWeight: FontWeight.w800)),
+                        const SizedBox(width: 12),
+                        Text((course['grade_point'] ?? '').toString(),
+                            style: const TextStyle(fontSize: 11, color: Colors.white54)),
+                      ],
+                    ),
+                  )),
+                ],
+              ],
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+class _InternalsTab extends StatelessWidget {
+  const _InternalsTab();
+
+  @override
+  Widget build(BuildContext context) {
+    final courses = AppState.instance.courses;
+    if (courses.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.all(18),
+        child: _EmptyState(
+          title: 'No course marks found',
+          subtitle: 'Internal assessment marks will appear when the MyCourses page is available.',
+        ),
+      );
+    }
+    return ListView(
+      padding: const EdgeInsets.all(16),
+      children: courses.map((course) {
+        final marks = (course['internal_marks'] as num?)?.toDouble() ?? 0;
+        final maximum = (course['max_internal'] as num?)?.toDouble() ?? 40;
+        final hasMarks = marks > 0;
+        return Card(
+          margin: const EdgeInsets.only(bottom: 8),
+          child: ListTile(
+            title: Text(course['subject_name']?.toString() ?? course['subject_code']?.toString() ?? 'Subject',
+                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+            subtitle: Text(course['subject_code']?.toString() ?? '',
+                style: const TextStyle(fontSize: 10, color: Colors.white38)),
+            trailing: Text(
+              hasMarks ? '${marks.toStringAsFixed(1)} / ${maximum.toStringAsFixed(0)}' : 'Not published',
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: hasMarks ? const Color(0xFF9BA8FF) : Colors.white38,
+              ),
+            ),
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+class _Metric extends StatelessWidget {
+  const _Metric({required this.label, required this.value});
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) => Expanded(
+    child: Container(
+      padding: const EdgeInsets.all(11),
+      decoration: BoxDecoration(
+        color: const Color(0xFF222D4B),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 9, color: Colors.white54)),
+          const SizedBox(height: 4),
+          Text(value, style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+        ],
+      ),
+    ),
+  );
+}
