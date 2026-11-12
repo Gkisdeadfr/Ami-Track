@@ -1,5 +1,3 @@
-import 'dart:convert';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 
@@ -16,16 +14,8 @@ class _AmizoneLoginScreenState extends State<AmizoneLoginScreen> {
   String? _message;
 
   Future<void> _onLoadStop(InAppWebViewController controller, WebUri? url) async {
-    if (_handingOff || url == null) return;
-    final uri = Uri.tryParse(url.toString());
-    if (uri == null ||
-        uri.host != 's.amizone.net' ||
-        !uri.path.toLowerCase().startsWith('/home')) {
-      return;
-    }
-
-    // Amizone's own inline handler has a casing bug (loginForm vs loginform).
-    // This only fixes form submission after the user has completed Turnstile.
+    // Install the compatibility handler while the login form is on screen.
+    // It only submits after Turnstile has produced a real response token.
     await controller.evaluateJavascript(source: """
       (function () {
         var form = document.getElementById('loginform');
@@ -47,9 +37,16 @@ class _AmizoneLoginScreenState extends State<AmizoneLoginScreen> {
       })();
     """);
 
+    if (_handingOff || url == null) return;
+    final uri = Uri.tryParse(url.toString());
+    if (uri == null || uri.host != 's.amizone.net' ||
+        !uri.path.toLowerCase().startsWith('/home')) {
+      return;
+    }
+
     _handingOff = true;
-    setState(() => _message = 'Amizone signed in. Securing your session…');
-    await Future<void>.delayed(const Duration(milliseconds: 600));
+    if (mounted) setState(() => _message = 'Amizone signed in. Securing your session…');
+    await Future<void>.delayed(const Duration(milliseconds: 650));
     try {
       final cookies = await CookieManager.instance().getCookies(
         url: WebUri('https://s.amizone.net/'),
@@ -58,7 +55,9 @@ class _AmizoneLoginScreenState extends State<AmizoneLoginScreen> {
         for (final cookie in cookies)
           if (cookie.name.isNotEmpty) cookie.name: cookie.value,
       };
-      if (session.isEmpty) throw Exception('Amizone did not return a session cookie.');
+      if (session.isEmpty) {
+        throw Exception('Amizone did not return a session cookie.');
+      }
       await widget.onAuthenticated(session);
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -79,12 +78,12 @@ class _AmizoneLoginScreenState extends State<AmizoneLoginScreen> {
             color: const Color(0xFF182440),
             child: Text(
               _message ??
-                  'Sign in on the official Amizone page and complete Cloudflare verification. '
-                      'Ami-Track never asks you to bypass the check.',
+                  'Use the official Amizone login and complete Cloudflare verification. '
+                  'Ami-Track never bypasses the check.',
               style: const TextStyle(fontSize: 12, color: Colors.white70),
             ),
           ),
-          const Expanded(
+          Expanded(
             child: InAppWebView(
               initialUrlRequest: URLRequest(url: WebUri('https://s.amizone.net/')),
               initialSettings: InAppWebViewSettings(
@@ -93,6 +92,7 @@ class _AmizoneLoginScreenState extends State<AmizoneLoginScreen> {
                 thirdPartyCookiesEnabled: true,
                 sharedCookiesEnabled: true,
               ),
+              onLoadStop: _onLoadStop,
             ),
           ),
         ],
