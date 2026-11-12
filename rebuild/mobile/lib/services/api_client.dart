@@ -39,30 +39,41 @@ class ApiClient {
   Future<String> registerSession({
     required String username,
     required Map<String, String> cookies,
+    String? userAgent,
   }) async {
-    final response = await _client.post(
-      _uri('/api/v1/auth/session'),
-      headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
-      body: jsonEncode({'username': username, 'cookies': cookies}),
-    );
+    final response = await _client
+        .post(
+          _uri('/api/v1/auth/session'),
+          headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+          body: jsonEncode({
+            'username': username,
+            'cookies': cookies,
+            if (userAgent != null && userAgent.isNotEmpty) 'user_agent': userAgent,
+          }),
+        )
+        .timeout(const Duration(seconds: 20));
     final result = _decode(response) as Map<String, dynamic>;
     return result['access_token'] as String;
   }
 
   Future<Map<String, dynamic>> sync() async {
-    final response = await _client.post(_uri('/api/v1/sync'), headers: _headers);
+    final response = await _client
+        .post(_uri('/api/v1/sync'), headers: _headers)
+        .timeout(const Duration(seconds: 90));
     return Map<String, dynamic>.from(_decode(response) as Map);
   }
 
   Future<List<Map<String, dynamic>>> resources({
     List<String> subjectCodes = const [],
   }) async {
-    final response = await _client.get(
-      _uri('/api/v1/nexacad/resources', {
-        if (subjectCodes.isNotEmpty) 'subject_codes': subjectCodes.join(','),
-      }),
-      headers: _headers,
-    );
+    final response = await _client
+        .get(
+          _uri('/api/v1/nexacad/resources', {
+            if (subjectCodes.isNotEmpty) 'subject_codes': subjectCodes.join(','),
+          }),
+          headers: _headers,
+        )
+        .timeout(const Duration(seconds: 45));
     final result = _decode(response) as Map<String, dynamic>;
     final raw = result['resources'] as List? ?? [];
     return raw.whereType<Map>().map((e) => Map<String, dynamic>.from(e)).toList();
@@ -70,10 +81,9 @@ class ApiClient {
 
   Future<void> clearSession() async {
     if (token == null) return;
-    final response = await _client.delete(
-      _uri('/api/v1/auth/session'),
-      headers: _headers,
-    );
+    final response = await _client
+        .delete(_uri('/api/v1/auth/session'), headers: _headers)
+        .timeout(const Duration(seconds: 15));
     _decode(response);
   }
 
